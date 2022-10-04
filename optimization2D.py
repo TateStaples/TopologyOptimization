@@ -87,8 +87,6 @@ def main(nelx, nely, volfrac, penal, rmin, ft):
 		loop=loop+1
 		# Setup and solve FE problem
 		sK=((KE.flatten()[np.newaxis]).T*(Emin+(xPhys)**penal*(Emax-Emin))).flatten(order='F')
-		print(sK.shape)
-		quit()
 		K = coo_matrix((sK,(iK,jK)),shape=(ndof,ndof)).tocsc()
 		# Remove constrained dofs from matrix
 		K = K[free,:][:,free]
@@ -104,7 +102,6 @@ def main(nelx, nely, volfrac, penal, rmin, ft):
 		elif ft==1:  # Density Filtering
 			dc[:] = np.asarray(H*(dc[np.newaxis].T/Hs))[:,0]
 			dv[:] = np.asarray(H*(dv[np.newaxis].T/Hs))[:,0]
-		# Optimality criteria
 		# Optimality criteria
 		xold[:]=x
 		(x[:],g)=oc(nelx,nely,x,volfrac,dc,dv,g)
