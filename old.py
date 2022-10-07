@@ -227,7 +227,7 @@ class FEA:
         (x_nodes, y_nodes, z_nodes) = density.shape
         num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom
         total_nodes = x_nodes * y_nodes * z_nodes
-        elementwise_stiffness = (material.element_stiffness.flatten() * np.repeat(material.stiffness(density), 576).reshape((total_nodes, 576))) .reshape((24 * 24 * total_nodes, 1))  # figure 15
+        elementwise_stiffness = (material.element_stiffness.flatten() * np.repeat(material.stiffness(density), 576).reshape((total_nodes, 576))).reshape((24 * 24 * total_nodes, 1))  # figure 15
         print(elementwise_stiffness[0:10])
         # global_stiffness = coo_matrix((elementwise_stiffness, (self.iK, self.jK)), shape=(num_dofs, num_dofs))#.tocsc()
         global_stiffness = coo_matrix((elementwise_stiffness, (self.iK, self.jK)), shape=(num_dofs, num_dofs), dtype=np.float64)

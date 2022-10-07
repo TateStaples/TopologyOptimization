@@ -5,22 +5,17 @@ import typing
 import matplotlib.pyplot as plt
 from scipy.sparse import linalg
 from matplotlib.colors import hsv_to_rgb
+import time
 
-
-# background: https://topopt.readthedocs.io/en/documentation/TopOpt.html#
-# todo
-# multiple load cases (you may be able to weight importance - allowing for tensile and torsion opt)-> https://www.top3d.app/tutorials/multiple-load-cases-top3d
-# look into other ways to optimize (strength, young modulus)
-# gyroid material (add some gradient and stiffness function of density)
-# different optimization algorithms (ie mma, sqp)
 
 class Material:
     """
     Class the wraps the material properties you are using.
     Used to calculate the stiffness given the density
     """
+    # todo: gyroid material (add some gradient and stiffness function of density)
 
-    def __init__(self, poisson: float = 0.3, max_stiff: float = 1.0, min_stiff: float = 1e-19, penal: int = 3):
+    def __init__(self, poisson: float = 0.3, max_stiff: float = 1.0, min_stiff: float = 1e-19, penal: float = 3):
         """
         Initialize the properties of for element
         :param poisson: the deformation shrinkage
@@ -133,7 +128,7 @@ class Filter:
         self.H, self.Hs = self._prep_filter(rmin)  # fixme: add better names
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
-        return np.asarray(self.H * (x[np.newaxis].T / self.Hs))[:, 0]
+        return np.array(self.H*(x.flatten()/self.Hs.flatten()).T).reshape(x.shape)
 
     def _prep_filter(self, filter_radius: float) -> typing.Tuple[np.ndarray, np.ndarray]:
         x_nodes, y_nodes, z_nodes = self.size
@@ -160,9 +155,8 @@ class Filter:
                                 sH[k] = max(0, filter_radius - np.sqrt((i1 - i2) ** 2 + (j1 - j2) ** 2 + (
                                             k1 - k2) ** 2))  # neighbor - distance = weight factor
                                 k = k + 1
-        H = coo_matrix((sH, (iH, jH)), shape=(
-        total_nodes, total_nodes)).tocsc()  # each row is coordinate, each item in row is the corresponding weight
-        Hs = H.sum(1)  # this is either the vertical or horizontal sum
+        H = coo_matrix((sH, (iH, jH)), shape=(total_nodes, total_nodes)).tocsc()  # each row is coordinate, each item in row is the corresponding weight
+        Hs = H.sum(1)  # the total weights of a node
         return H, Hs
 
 
@@ -177,17 +171,18 @@ class FEA:
         :param material: The material that the model is made of
         """
         self.material = material
-        x_nodes, y_nodes, z_nodes = shape
+        y_nodes, x_nodes, z_nodes = shape
+        self.total_nodes = x_nodes * y_nodes * z_nodes
         self.num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom - format is [Fx1, Fy1, Fz1, Fx2 ... Fz#]
 
         # BC's and support
         dofs = np.arange(self.num_dofs)  # the indices where the structure can flex
-        self.forces = get_load(shape)  # which DOFs have forces applied
+        self.forces = csr_matrix(get_load(shape))  # which DOFs have forces applied
         fixed_dof = get_fixed(shape)  # which parts of the structure are fixed in place
         self.free_dofs = np.setdiff1d(dofs, fixed_dof)  # the parts that are free to move
 
         # setup node connections
-        node_grd = np.array(range(0, (y_nodes + 1) * (x_nodes + 1))).reshape((y_nodes + 1, x_nodes + 1))
+        node_grd = np.array(range(0, (y_nodes + 1) * (x_nodes + 1))).reshape((y_nodes + 1, x_nodes + 1), order='F')
         node_ids = node_grd[:-1, :-1].reshape((y_nodes * x_nodes, 1))
         nodeidz = np.array(range(0, (z_nodes - 1) * (y_nodes + 1) * (x_nodes + 1) + 1, (y_nodes + 1) * (x_nodes + 1)))
         node_ids = np.tile(node_ids, (1, len(nodeidz))) + nodeidz
@@ -197,19 +192,20 @@ class FEA:
                 [0, 1, 2, *(np.array([3, 4, 5, 0, 1, 2]) + 3 * y_nodes), -3, -2, -1]))])
         # 3d
         self.element_dof_mat = np.tile(element_dof_vec, (24, 1)).T + relative_element  # indices of the dof for each element
-        # todo: figure out the variables below
         self.iK = np.kron(self.element_dof_mat, np.ones((24, 1))).flatten()
         self.jK = np.kron(self.element_dof_mat, np.ones((1, 24))).flatten()
 
     def displace(self, density: np.ndarray):
-        elementwise_stiffness = ((self.material.element_stiffness.flatten()[np.newaxis]).T * (self.material.stiffness(density))).flatten(order='F')
-
+        elementwise_stiffness = ((self.material.element_stiffness.flatten()[np.newaxis]).T*(self.material.min_stiff+(density.flatten())**self.material.penal*(self.material.max_stiff-self.material.min_stiff))).flatten(order='F')  # figure 15
         global_stiffness = coo_matrix((elementwise_stiffness, (self.iK, self.jK)), shape=(self.num_dofs, self.num_dofs)).tocsc()
         global_stiffness = (global_stiffness + global_stiffness.T) / 2.0
         # Remove constrained dofs from matrix
-        global_stiffness = global_stiffness[self.free_dofs, :][:, self.free_dofs]
+        gs = global_stiffness[self.free_dofs, :][:, self.free_dofs]
+        fs = self.forces[self.free_dofs, :]
         # Solve system
-        return self.solve_default(global_stiffness, self.forces[self.free_dofs, 0])
+        #test = gs.todense()
+        #val = linalg.spsolve(gs, fs)
+        return self.solve_default(gs, fs)
 
     @staticmethod
     def solve_default(stiffness, forces):
@@ -218,18 +214,20 @@ class FEA:
     @staticmethod
     def solve_iterative(stiffness, force):
         # https://www.top3d.app/tutorials/iterative-solver-top3d
-        precondition_matrix = np.diag(np.diag(stiffness))
+        d1 = stiffness.diagonal()
+        precondition_matrix = diags(d1)
         linalg.cg(stiffness, force, tol=1e-8, maxiter=8000, M=precondition_matrix)
 
 
 class Optimizer:
+    # todo: look into other ways to optimize (strength, young modulus)
     def __init__(self, shape: typing.Tuple[int, int, int]):
         self.shape = shape
         self.total_nodes = 1
         for dim in shape: self.total_nodes *= dim
-        self.dv = np.ones(self.total_nodes)
-        self.dc = np.ones(self.total_nodes)
-        self.strain = np.ones(self.total_nodes)  # i think this is strain energy
+        self.dv = np.ones(shape)
+        self.dc = Filter.smoothen(np.ones(shape))  # in the paper this goes in sensistivity analysis, but it looks constant
+        self.strain = np.ones(shape)  # i think this is strain energy
         self.score = 0
         self.change = 0
 
@@ -245,15 +243,16 @@ class Optimizer:
         total_nodes = self.total_nodes
         # OBJECTIVE FUNCTION AND SENSITIVITY ANALYSIS - figure 17-28 (minimum compliance)
         # 3d
-        self.strain[:] = (np.dot(displacements[element_dof_mat].reshape(total_nodes, 24), material.element_stiffness) * displacements[element_dof_mat].reshape(total_nodes, 24)).sum(1)
-        self.score = (material.stiffness(density) * self.strain).sum()
-        self.dc[:] = (-material.gradient(density)) * self.strain
-        self.dv[:] = np.ones(total_nodes)
+        self.strain[:] = (np.dot(displacements[element_dof_mat].reshape(total_nodes, 24), material.element_stiffness) * displacements[element_dof_mat].reshape(total_nodes, 24)).sum(1).reshape(density.shape)
+        self.score = (material.stiffness(density).flatten() * self.strain.flatten()).sum()
+        self.dc[:] = (-material.gradient(density).flatten() * self.strain.flatten()).reshape(density.shape)
+        self.dv[:] = np.ones(self.shape)
         # Density Filtering (prevents irregular gaps)
         self.dc[:] = Filter.smoothen(self.dc)
-        self.dv[:] = Filter.smoothen(self.dv)  # todo: does this need to be recalculated?
+        self.dv[:] = Filter.smoothen(self.dv)
         return self.dc, self.dv, self.score
 
+    # todo
     def sequential_quadratic_programming(self):
         pass
 
@@ -286,7 +285,8 @@ class Optimizer:
             # else:
             #     l2 = lmid
             xnew[:] = coerce_elements(xnew)
-            if Filter.smoothen(xnew).mean() > volfrac:  #
+            density[:] = Filter.smoothen(xnew)
+            if density.mean() > volfrac:  #
                 l1 = lmid
             else:
                 l2 = lmid
@@ -300,11 +300,12 @@ def get_load(shape: typing.Tuple[int, int, int]):
     :param shape: the number of nodes in the x, y, and z direction
     :return: flat array of forces with len of num_dof with format [Fx of n1, Fy of n2, Fz of n1, ... Fz of n]
     """
-    x_nodes, y_nodes, z_nodes = shape
+    # todo: multiple load cases (you may be able to weight importance - allowing for tensile and torsion opt)-> https://www.top3d.app/tutorials/multiple-load-cases-top3d
+    y_nodes, x_nodes, z_nodes = shape
     # USER-DEFINED LOAD DOFs - where the forces are (top)
-    il, jl, kl = np.meshgrid(x_nodes, range(0, y_nodes), 0)  # Coordinates - this is a vector of forces at the end x distributed along 0 to max z
+    il, jl, kl = np.meshgrid(x_nodes, 0, range(0, z_nodes+1))  # Coordinates - this is a vector of forces at the end x distributed along 0 to max z
     loadnid = kl * (x_nodes + 1) * (y_nodes + 1) + il * (y_nodes + 1) + (y_nodes + 1 - jl)  # Node IDs
-    load_dof = 3 * loadnid - 1  # DOFs
+    load_dof = 3 * loadnid - 2  # DOFs
     num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom
     forces = np.zeros((num_dofs, 1))  # setup force
     forces[load_dof] = -1  # apply negative force at load
@@ -317,11 +318,11 @@ def get_fixed(shape: typing.Tuple[int, int, int]):
     :param shape: the number of nodes in the x, y, and z direction
     :return: the indices of the dof array that are fixed
     """
-    x_nodes, y_nodes, z_nodes = shape
+    y_nodes, x_nodes, z_nodes = shape
     # USER-DEFINED SUPPORT FIXED DOFs
-    iif, jf, kf = np.meshgrid(0, range(0, y_nodes), range(0, z_nodes))  # Coordinates - the supports are x=0 along the surface by iterating thorugh y&z
+    iif, jf, kf = np.meshgrid(0, range(0, y_nodes+1), range(0, z_nodes+1))  # Coordinates - the supports are x=0 along the surface by iterating thorugh y&z
     fixednid = kf * (x_nodes + 1) * (y_nodes + 1) + iif * (y_nodes + 1) + (y_nodes + 1 - jf)  # Node IDs
-    fixed_dof = np.array([3 * fixednid, 3 * fixednid - 1, 3 * fixednid - 2])  # DOFs
+    fixed_dof = list(3 * fixednid.flatten() - 1) + list(3 * fixednid.flatten() - 2) + list(3 * fixednid.flatten() - 3)  # DOFs
     return fixed_dof
 
 
@@ -338,11 +339,11 @@ def coerce_elements(x: np.ndarray) -> np.ndarray:
 
 # === DISPLAY 3D TOPOLOGY (ISO-VIEW) === #
 def display_3d(structure: np.ndarray, strain: np.ndarray, shape):
-    # fixme: i think the reshape isn't working properly
-    x_nodes, y_nodes, z_nodes = shape
-    strain = np.minimum(1.0, strain.reshape(shape) / strain[structure > 0.1].max())#np.sqrt((displacements.reshape((len(displacements)//3, 3)) ** 2.0).sum(1)).reshape(shape)
-    total_nodes = len(structure)
-    structure = structure.reshape(shape)  # convert flat array the 3d array matching shape todo: i think this reshape may be wrong
+    # fixme: figure out the shape
+    y_nodes, x_nodes, z_nodes = shape
+    strain = np.minimum(1.0, strain.reshape(shape) / strain[structure > 0.1].max())
+    total_nodes = x_nodes * y_nodes * z_nodes
+    # structure = structure.reshape(shape)  # convert flat array the 3d array matching shape todo: i think this reshape may be wrong
     hue = 2 / 3 - strain * 2 / 3  # get red to blue hue depending on displacement
     saturation = np.ones(shape)  # always high saturation
     value = np.ones(shape)  # always bright
@@ -350,17 +351,15 @@ def display_3d(structure: np.ndarray, strain: np.ndarray, shape):
     rgb = hsv_to_rgb(hsv.reshape((total_nodes, 3))).reshape((*shape, 3))  # convert to accepted format
     alpha = structure.reshape((*shape, 1))
     rgba = np.concatenate((rgb, alpha), axis=3)  # same thing with tranparency equal to density
-    #rgba[:, 0, :] = np.array([0., 0., 0., 1.0])
-    #rgba[0, :, :] = np.array([0., 0., 0., 1.0])
+    # rgba[:, 0, :] = np.array([0., 0., 0., 1.0])
+    # rgba[0, :, :] = np.array([0., 0., 0., 1.0])
     ax = plt.figure().add_subplot(projection='3d')  # todo: look into interactivity so you can look around
+    ax.get_proj = lambda: np.dot(Axes3D.get_proj(ax), np.diag([x_nodes, y_nodes, z_nodes, 1]))
     blocks = np.zeros(structure.shape, dtype=bool)
     blocks[structure > 0.05] = True
     ax.voxels(blocks, facecolors=rgba)
     plt.ion()
-    plt.draw()
-
-    input()
-
+    plt.show()
 
 
 def save(structure: np.ndarray, filename: str) -> None: np.save(filename+".npy", structure)
@@ -368,23 +367,23 @@ def load(filename: str) -> np.ndarray: return np.load(filename+".npy")
 
 
 def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float, rmin: float):
-    shape = (y_nodes, x_nodes, z_nodes)  # the shape of our grid - used to create arrays
-    total_nodes = x_nodes * y_nodes * z_nodes
+    shape = (y_nodes, x_nodes, z_nodes)  # the shape of our grid - used to create arrays #fixme is this the right order
     num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom - format is [Fx1, Fy1, Fz1, Fx2 ... Fz#]
 
     # Allocate design variables (as array), initialize and allocate sens.
-    x = volfrac * np.ones(total_nodes, dtype=float)  # start as a homogenous solid
+    x = volfrac * np.ones(shape, dtype=float)  # start as a homogenous solid
     density = x.copy()
     displacements = np.zeros((num_dofs, 1))  # initialize the number of DOF, starts in place
 
     # prepare helper classes
-    material = Material(0.3, penal=penal)  # define the material properties of you structure
+    material = Material(0.3, 1.0, 1e-19, penal)  # define the material properties of you structure
     modeler = FEA(shape, material)  # setup FEA analysis
     smooth_filter = Filter(rmin, shape)  # filter to prevent gaps
 
     # Set loop counter and gradient vectors
     change = 1
     optimizer = Optimizer(shape)  # the class that contains the optimization algorithm
+    start_time = time.time()
     for loop in range(2000):
         if change < 0.01: break  # if you have reached the minimum its not worth continuing
         # Setup and solve FE problem
@@ -395,20 +394,33 @@ def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float,
         x[:], change = optimizer.optimality_criteria(x, compliance_gradient, volume_gradient, volfrac)
         # Filter design variables
         density[:] = smooth_filter(x)
+
         # Write iteration history to screen (req. Python 2.6 or newer)
-        print(f"it.: {loop} , obj.: {round(obj, 3)} Vol.: {round(density.mean(), 2)}, ch.: {round(change, 2)}")
+        print(f"i: {loop} (avg {round((time.time()-start_time)/(loop+1), 2)} sec),\t"
+              f"comp.: {round(obj, 3)}\t"
+              f"Vol.: {round(density.mean(), 3)*100}%,\t"
+              f"ch.: {round(change, 2)}")
     display_3d(x, optimizer.strain, shape)
     save(x, "test")
 
 
+def run_load():
+    structure = load("test")
+    shape = (y_nodes, x_nodes, z_nodes) = structure.shape
+    num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom - format is [Fx1, Fy1, Fz1, Fx2 ... Fz#]
+    displacements = np.zeros((num_dofs, 1))
+    material = Material(0.3, 1.0, 1e-19, 4)  # define the material properties of you structure
+    modeler = FEA(shape, material)  # setup FEA analysis
+    smooth_filter = Filter(1.5, shape)  # filter to prevent gaps
+    optimizer = Optimizer(shape)  # the class that contains the optimization algorithm
+    start_time = time.time()
+    # Setup and solve FE problem
+    displacements[modeler.free_dofs, 0] = modeler.displace(structure)
+    # Objective and sensitivity
+    compliance_gradient, volume_gradient, obj = optimizer.sensitivity_analysis(structure, displacements, material,modeler.element_dof_mat)
+    display_3d(structure, optimizer.strain, shape)
+
+
 if __name__ == '__main__':
-    main(5, 5, 5, 0.2, 1, 1.5)
-
-
-# === ----------------------------------------------------------------- ===
-# === The code is intended for educational purposes, and the details    ===
-# === and extensions can be found in the paper:                         ===
-# === K. Liu and A. Tovar, "An efficient 3D topology optimization code  ===
-# === written in Matlab", Struct Multidisc Optim, 50(6): 1175-1196, 2014, =
-# === doi:10.1007/s00158-014-1107-x                                     ===
-# === ----------------------------------------------------------------- ===
+    run_load()
+    # main(15, 5, 5, 0.2, 4, 1.5)
