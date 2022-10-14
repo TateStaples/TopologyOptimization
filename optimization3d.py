@@ -6,23 +6,26 @@ import matplotlib.pyplot as plt
 from scipy.sparse import linalg
 from matplotlib.colors import hsv_to_rgb
 import time
+from MMA import mmasub
 
 
 class Material:
     """
-    Class the wraps the material properties you are using.
-    Used to calculate the stiffness given the density
+    Describes the material properties you are using
+    1. stiffness[E] (density[x]) at elem i = min stiffness + x^p * (max stiffness[E0] − min stiffness[Emin]) -> SIMP method
+    2. ∫∫∫ strain_matrix.T [B] * unit elastic matrix [D] * B 𝑑x𝑑y𝑑z
+    3. global stiffness = sum(E(x) * element stiffness)
     """
-    # todo: gyroid material - penal and poisson
+    # todo: gyroid material - https://www.sciencedirect.com/science/article/abs/pii/S0010448518300381?via%3Dihub
 
     def __init__(self, poisson: float = 0.3, max_stiff: float = 1.0, min_stiff: float = 1e-19, penal: float = 3):
         """
         Initialize the properties of for element
-        :param poisson: the deformation shrinkage
-        :param max_stiff: Young's modulus of solid material (stiffness)
+        :param poisson: the deformation shrinkage (for x unit strech, how much y pinch)
+        :param max_stiff: Young's modulus of solid material (stiffness) todo: calibrate for real if gonna use yield stress
         :param min_stiff: Young's modulus of void-like material
         """
-        assert poisson > 0 and max_stiff <= 1 and min_stiff >= 0
+        assert poisson > 0 and max_stiff <= 1 and min_stiff > 0
         self.poisson = poisson
         self.max_stiff = max_stiff
         self.min_stiff = min_stiff
@@ -31,11 +34,13 @@ class Material:
         self.elastic_matrix = self._elastic_matrix()
         self.penal = penal
 
-    def _element_stiffness(self): # 3d
+    def _element_stiffness(self) -> np.ndarray:
         """
         Converts the material properties into a matrix representing the stiffness of a hexhedral (cube) element
         :return: 24x24 array representing the x,y,z stiffness of each corner of the element
         """
+        # source: https://link.springer.com/article/10.1007/s11081-021-09675-3#ref-CR23
+        # solved formula for eq 2
         A = np.array([  # todo: figure out where this is derived from
             [32, 6, -8, 6, -6, 4, 3, -6, -10, 3, -3, -3, -4, -8],
             [-48, 0, 0, -24, 24, 0, 0, 0, 12, -12, 0, 12, 12, 12]
@@ -92,7 +97,11 @@ class Material:
         ])
         return KE.swapaxes(1, 2).reshape(24, 24)
 
-    def _strain_matrix(self):
+    def _strain_matrix(self) -> np.ndarray:
+        """
+        Gets the strain matrix for a hexhedral element
+        :return: 6x24 matrix
+        """
         B_1 = np.array([-0.044658, 0, 0, 0.044658, 0, 0, 0.16667, 0,
                0, -0.044658, 0, 0, -0.16667, 0, 0, 0.16667,
                0, 0, -0.044658, 0, 0, -0.16667, 0, 0,
@@ -115,7 +124,12 @@ class Material:
         B = np.hstack((B_1, B_2, B_3))
         return B
 
-    def _elastic_matrix(self):
+    def _elastic_matrix(self) -> np.ndarray:
+        """
+        Get the elasticity of a hexahedral element based on poisson ratio
+        https://link.springer.com/article/10.1007/s11081-021-09675-3#Sec5 - Eq. 10
+        :return: 6x6 matrix
+        """
         nu = self.poisson
         D = [
             [1 - nu, nu, nu, 0, 0, 0],
@@ -127,24 +141,29 @@ class Material:
         ]
         return 1 / ((1 + nu) * (1 - 2 * nu)) * np.array(D)
 
-    def stiffness(self, density):
+    def stiffness(self, density: np.ndarray) -> np.ndarray:
         """
-        Calculate stiffness of the material given a material
+        Calculate stiffness of the material given a material. Based on the Solid Isotropic Material Penalization (SIMP)
         :param density: the density of the material
-        :return: stiffness matrix
+        :return: the stiffness at each point in the structure
         """
+        # https://link.springer.com/article/10.1007/s11081-021-09675-3#Sec5 - Eq. 13
         return self.min_stiff + density ** self.penal * (self.max_stiff - self.min_stiff)
 
-    def gradient(self, density):
+    def gradient(self, density: np.ndarray) -> np.ndarray:
         """
-        Get the gradient of stiffness by density
+        Gradient of the stiffness with respect to density
         :param density: the density matrix
-        :return: the gradient of the stiffness compared to density
+        :return: the gradient of the stiffness compared to density (same shape as density)
         """
-        return self.penal * (self.max_stiff - self.min_stiff) * density ** (self.penal - 1)  # see equation 26 of matlab paper
+        return self.penal * density ** (self.penal - 1) * (self.max_stiff - self.min_stiff)  # see equation 26 of matlab paper
 
 
-class Filter:
+# https://www.sciencedirect.com/science/article/pii/S002076831400256X
+class Gyroid(Material): pass
+
+
+class Filter:  # todo: move this out of a class and into a new file
     """
     Filter that averages mesh properties with neighbors weighted by their distance
     """
@@ -196,7 +215,13 @@ class Filter:
 
 class FEA:
     """
-    Class the performs the analysis of how the structure deforms
+    Class the performs the physical analysis of how the structure deforms
+    Equations:
+    1. force [F] = global stiffness [K] * displacement[U]
+    2. stress [s] at elem i = solid stiffness [D] * strain matrix [B] at elem i * U at elem i = (σ𝑖𝑥,σ𝑖𝑦,σ𝑖𝑧,σ𝑖𝑥𝑦,σ𝑖𝑦𝑧,σ𝑖𝑧𝑥).𝑇
+    3. relaxed stress(x) [rs/σ] = 𝜂(𝑥) * s, where 𝜂(𝑥) is some penalization scheme -> x^q for some q that prevents singularity from low densities
+    4. von mises stress[vm] = sqrt(σ𝑥^2+σ𝑦^2+σ𝑧^2−σ𝑥σ𝑦−σ𝑦σ𝑧−σ𝑧σ𝑥+3t𝑥𝑦^2+3t𝑦𝑧^2+3t𝑧𝑥^2) -> magnitude of stress for comparing to yield
+    5. global p norm stress [pn] = sum(vm^p)^(1-p) -> greater p is a more accurate but can cause oscillation (p>30)
     """
     def __init__(self, shape: typing.Tuple[int, int, int], material: Material):
         """
@@ -212,8 +237,8 @@ class FEA:
         # loads and supports
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
-        force_location[y_nodes, :, :] = True
-        fix_location[0, :, :] = True
+        force_location[0, x_nodes, :] = True
+        fix_location[:, 0, :] = True
         load_case = LoadCase(shape, 1).add_force((0, -1, 0), force_location).affix(fix_location)
         self.forces = csr_matrix(load_case.force)
         self.free_dofs = load_case.free_dof
@@ -239,88 +264,142 @@ class FEA:
         self.compliance = 0
         self.strain = np.zeros(shape)
 
-        self.total_stress = 0
+        self.max_stress = 0
         self.von_mises_stress = np.zeros((self.total_nodes, 1))  # von Mises stress vector
         self.stress = np.zeros((self.total_nodes, 6))  # stress has 6 components for each
 
     def displace(self, density: np.ndarray):
-        elementwise_stiffness = ((self.material.element_stiffness.flatten()[np.newaxis]).T*(self.material.min_stiff+density.flatten('F')**self.material.penal*(self.material.max_stiff-self.material.min_stiff))).flatten(order='F')  # figure 15 fixme
-        global_stiffness = coo_matrix((elementwise_stiffness, (self.iK, self.jK)), shape=(self.num_dofs, self.num_dofs)).tocsc()
-        global_stiffness = (global_stiffness + global_stiffness.T) / 2.0  # average with previous?
+        """
+        Applies the load condition to the supplied structure
+        :param density: the denisty field of the structure
+        :return: None. Displacements and other phyiscal properties are internally updated
+        """
+        # https://link.springer.com/article/10.1007/s11081-021-09675-3#Sec5 - Eq. 12
+        # eq. material.3
+        elementwise_stiffness = ((self.material.element_stiffness.flatten()[np.newaxis]).T*(self.material.min_stiff+density.flatten('F')**self.material.penal*(self.material.max_stiff-self.material.min_stiff))).flatten(order='F')
+        self.global_stiffness = coo_matrix((elementwise_stiffness, (self.iK, self.jK)), shape=(self.num_dofs, self.num_dofs)).tocsc()
+        self.global_stiffness = (self.global_stiffness + self.global_stiffness.T) / 2.0  # average with previous?
         # Remove constrained dofs from matrix
-        gs = global_stiffness[self.free_dofs, :][:, self.free_dofs]
+        gs = self.global_stiffness[self.free_dofs, :][:, self.free_dofs]
         fs = self.forces[self.free_dofs, :]
+        # solves F = KU (eq. 1) for U, either by doing K.inv() * F or some iterative solver
         self.displacement[self.free_dofs, 0] = self.solve_default(gs, fs)
         self.calc_strain(density)
         self.calc_stress(density)
 
     def calc_stress(self, x):
+        """
+        Calculate the stresses caused by the deformations of the laod
+        :param x: the structure densities
+        :return: None. Internally updates stress, VM stress, and max_stress
+        """
         # https://link.springer.com/article/10.1007/s11081-021-09675-3#Sec9
-        q = 0.5  # 𝑞 is the stress relaxation parameter
-        p = 8  # 𝑝 is the norm aggregation - higher values of p are more accurate but can cause oscillation (formula 8)
+        q = 0.5  # 𝑞 is the stress relaxation parameter - prevent singularity
+        p = 8  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
         D, B = self.material.elastic_matrix, self.material.strain_matrix
 
         flat_x = x.flatten('F')
         # calculate stress
         for i in range(0, x.size):  # todo: does stress and vm need to be flat?
-            # relaxed stress vector - formulae 3-5
-            # relaxed is meant to prevent singularity
-            temp = flat_x[i] ** q * (D @ B @ self.displacement[self.element_dof_mat[i, :]]).T[0]
-            self.stress[i, :] = temp
-            # formula 7
-            self.von_mises_stress[i] = np.sqrt(0.5 * ((temp[0] - temp[1]) ** 2 + (temp[0] - temp[2]) ** 2 + (temp[1] - temp[2]) ** 2 + 6 * sum(temp[3:6] ** 2)))
+            n = flat_x[i] ** q  # 𝜂(𝑥) from eq. 3
+            s = (D @ B @ self.displacement[self.element_dof_mat[i, :]]).T[0]  # eq. 2
+            relaxed_stress = n * s  # eq. 3
+            self.stress[i, :] = relaxed_stress
+            self.von_mises_stress[i] = np.sqrt(0.5 * ((relaxed_stress[0] - relaxed_stress[1]) ** 2 + (relaxed_stress[0] - relaxed_stress[2]) ** 2 + (relaxed_stress[1] - relaxed_stress[2]) ** 2 + 6 * sum(relaxed_stress[3:6] ** 2)))  # eq. 4
 
-        self.total_stress = (self.von_mises_stress ** p).sum() ** (1/p)
+        self.max_stress = (self.von_mises_stress ** p).sum() ** (1 / p)  # eq. 5
+        pass
 
     def calc_strain(self, density):
+        """
+        Runs the calculation of the strain caused by the load deformation
+        :param density: the densities of the structure
+        :return: None. Strain and compliance are internally updated
+        """
         self.strain = (
                     np.dot(self.displacement[self.element_dof_mat].reshape(self.total_nodes, 24), self.material.element_stiffness) *
-                    self.displacement[self.element_dof_mat].reshape(self.total_nodes, 24)).sum(1).reshape(density.shape,
-                                                                                                 order="F")
+                    self.displacement[self.element_dof_mat].reshape(self.total_nodes, 24)).sum(1).reshape(density.shape,order="F")
         self.compliance = (self.material.stiffness(density).flatten() * self.strain.flatten()).sum()
 
     @staticmethod
     def solve_default(stiffness, forces):
+        """
+        Solve the Equation F = KU for U [displacement] This is an expanded version of Hooke's law F = k * ∆x
+        This is a standard solver that computes U by solving for the K inverse which can slow at larger problems
+        :param stiffness: the global stiffness matrix (at free dofs)
+        :param forces: the forces being applied to the structure (at free dofs)
+        :return: the nodel displacemetns (at freedofs)
+        """
         return linalg.spsolve(stiffness, forces)
 
     @staticmethod
-    def solve_iterative(stiffness, force):  # fixme
-        # https://www.top3d.app/tutorials/iterative-solver-top3d
+    def solve_iterative(stiffness, force):
+        """
+        Solve the Equation F = KU for U [displacement] This is an expanded version of Hooke's law F = k * ∆x
+        This is a iterative solver that approximates U using the conjugate gradient method (ie weird math)
+        source: https://www.top3d.app/tutorials/iterative-solver-top3d
+        :param stiffness: the global stiffness matrix (at free dofs)
+        :param forces: the forces being applied to the structure (at free dofs)
+        :return: the nodel displacemetns (at freedofs)
+        """
         d1 = stiffness.diagonal()
         precondition_matrix = diags(d1)
         linalg.cg(stiffness, force, tol=1e-8, maxiter=8000, M=precondition_matrix)
 
 
-class Optimizer:
+class SensitivityAnalysis:
+    """ Calculator for finding the important gradients to help in optimization """
     def __init__(self, shape: typing.Tuple[int, int, int]):
         y, x, z = self.shape = shape
         self.total_nodes = x * y * z
         self.dc = np.ones(shape)
         self.dv = Filter.smoothen(np.ones(self.shape))  # in the paper this goes in sensistivity analysis, but it looks constant
-        self.strain_energy = np.ones(shape)  # the amount of energy causes by compliance and stiffness
-        self.change = 0
-
-    def minimize_compliance(self, density: np.ndarray, model: FEA, volfrac: float) -> typing.Tuple[np.ndarray, float]:
-        self.compliance_sensitivity(density, model)
-        return self.optimality_criteria(density, self.dc, self.dv, volfrac)
 
     def compliance_sensitivity(self, density: np.ndarray, model: FEA):
+        """
+        Calculate the gradient of compliance with respect to density (dCdX)
+        :param density: densities of the structure
+        :param model: the physical model of the structure. Contains important properties
+        :return: Compliance gradient, Volume gradient, current compliance
+        """
         # OBJECTIVE FUNCTION AND SENSITIVITY ANALYSIS - figure 17-28 (minimum compliance)
-        self.dc[:] = (-model.material.gradient(density).flatten() * model.strain.flatten()).reshape(density.shape)
+        self.dc[:] = -model.material.gradient(density) * model.strain  # i dont actually know where this is derived in the paper
         # Density Filtering (prevents irregular gaps)
         self.dc[:] = Filter.smoothen(self.dc)
         return self.dc, self.dv, model.compliance
 
     def stress_sensitivity(self, density: np.ndarray, model: FEA):
+        """
+        Calculate the gradient of the max stress with respect to density. The derivation of this is really weird so beware
+        source: https://link.springer.com/article/10.1007/s11081-021-09675-3#ref-CR35
+
+        Equations:
+        dPNdVM = sum(stress^p)^(1/p-1) * vm^(p-1) -> deriv of FEA.5
+        dNdX = q*x^(q-1) -> n(x) = x^q
+        dVMdRS = linear: 0.5 * 1/vm (sx - sy - sz), shear: 3 / vm * τ -> deriv of FEA. 4
+        𝛽 [beta]  = vm^(p-1) * dVMdRS.T * dNdX * rs
+        T1 = sum(dPNdVM * 𝛽)
+
+        𝛾 [gama] = sum(n(x) * dPNdVM * dSdX.T * dVMdRS)
+        K𝜆 [lambda] = 𝛾 * K.inv()
+        dKdX = L.T * material.gradient(x) * element_stiffness * L
+        U = F/K
+        T2 = -𝜆.T * dKdX * U
+
+        dPNdX = T1 + T2
+
+        :param density: the densities of the structure
+        :param model: physical model
+        :return: gradient of the max stress with respect to density
+        """
         p = 8
         q = 0.5
-        # https://link.springer.com/article/10.1007/s11081-021-09675-3#ref-CR35
         strain_matrix, elastic_matrix = model.material.strain_matrix, model.material.elastic_matrix
 
-        DvmDrs = np.zeros((model.total_nodes, 6))  # derivative of von mies stress with respect to relaxed stress
+        DvmDrs = np.zeros((self.total_nodes, 6))  # derivative of von mies stress with respect to relaxed stress
         DpnDvm = (model.von_mises_stress ** p).sum() ** (1 / p - 1)  # derivative of p normal stress (obj) with respect to von mises stress
         index_matrix = model.element_dof_mat.T
-        for i in range(0, model.total_nodes):
+        for i in range(0, self.total_nodes):
             DvmDrs[i, 0] = 1/2 / model.von_mises_stress[i] * (2 * model.stress[i, 0] - model.stress[i, 1] - model.stress[i, 2])
             DvmDrs[i, 1] = 1/2 / model.von_mises_stress[i] * (2 * model.stress[i, 1] - model.stress[i, 0] - model.stress[i, 2])
             DvmDrs[i, 2] = 1/2 / model.von_mises_stress[i] * (2 * model.stress[i, 2] - model.stress[i, 0] - model.stress[i, 1])
@@ -329,20 +408,19 @@ class Optimizer:
             DvmDrs[i, 5] = 3 / model.von_mises_stress[i] * model.stress[i, 5]
 
         # calculation of T1
-        # sum(dPNdVM[dVMds.T * dNdx * s]) - beta is between the square brackets
-        beta = np.zeros((model.total_nodes, 1))
-        for i in range(0, model.total_nodes):
+        # sum(vm^(p-1) * dPNdVM[dVMds.T * dNdx * s]) - beta is between the square brackets - Eq. 20
+        beta = np.zeros((self.total_nodes, 1))
+        for i in range(0, self.total_nodes):
             element_displacement = model.displacement[model.element_dof_mat[i, :], :].T.reshape((24, 1), order="F")
             DnDx = q * (density.flatten('F')[i]) ** (q - 1)  # Eq. 19 - https://link.springer.com/article/10.1007/s11081-021-09675-3#Equ19
             DsDx = elastic_matrix @ strain_matrix @ element_displacement  # Eq. 21  - https://link.springer.com/article/10.1007/s11081-021-09675-3#Equ21
-            # todo: where does the p-1 come from
             beta[i] = DnDx * model.von_mises_stress[i] ** (p - 1) * DvmDrs[i, :] @ DsDx  # fixme is it (@ or *)?
         T1 = DpnDvm * beta
 
         # calculation of T2
         # 𝛾 [gama] = sum(n(x) * dPNdVM * dSdX.T * dVMdRS)
         gama = np.zeros(model.displacement.shape)
-        for i in range(0, model.total_nodes):
+        for i in range(0, self.total_nodes):
             index = index_matrix[:, i]
             DsDx = elastic_matrix @ strain_matrix
             n = density.flatten('F')[i] ** q
@@ -352,8 +430,8 @@ class Optimizer:
         lamda = np.zeros(model.displacement.shape)
         lamda[model.free_dofs, 0] = model.solve_default(model.global_stiffness[model.free_dofs, :][:, model.free_dofs], gama[model.free_dofs, :])
 
-        T2 = np.zeros((model.total_nodes, 1))
-        for i in range(0, model.total_nodes):
+        T2 = np.zeros((self.total_nodes, 1))
+        for i in range(0, self.total_nodes):
             index = index_matrix[:, i]
             # T2 = -𝜆.T * dKdx * U [Eq. 29]
             dKdX = model.material.penal * density.flatten('F')[i] ** (model.material.penal - 1) * model.material.element_stiffness
@@ -362,7 +440,88 @@ class Optimizer:
         DpnDx = T1 + T2
         return DpnDx.reshape(density.shape, order="F")
 
-    def optimality_criteria(self, x: np.ndarray, dc: np.ndarray, dv: np.ndarray, volfrac: float) -> typing.Tuple[np.ndarray, float]:
+
+class Parameter:
+    """Class to wrap value and gradient for objective and constraint values"""
+    def __init__(self, value, gradient): self.value = value; self.gradient = gradient
+
+
+class Optimizer:
+    def __init__(self, shape, volfrac):
+        """ ignore most of this shit. Initializing random values for mma"""
+        x_, y, z = self.shape = shape
+        self.total_nodes = n = x_ * y * z  # number of design variables
+        self.volfrac = volfrac  # target volume fraction
+        self.total_constraints = 1  # number of constraints
+        self.min_densities = 1e-3 * np.ones((n, 1))  # minimum values for design
+        self.max_densities = np.ones((n, 1))  # max values for design
+        self.x_new = np.zeros(shape)
+        self.x_old1 = np.zeros((n, 1))  # prev value - saved calculation value
+        self.x_old2 = np.zeros((n, 1))  # value 2 ago - saved calculation value
+        self.low = np.ones((n, 1))  # asymptote - saved calculation value
+        self.upp = np.ones((n, 1))  # upper asymptote - saved calculation value
+        self.a0 = 1.0
+        self.a = np.zeros((self.total_constraints, 1))
+        self.c = 1e4 * np.ones((self.total_constraints, 1))
+        self.d = np.zeros((self.total_constraints, 1))
+        self.move = 0.2
+        self.iter = 0
+
+    def mma(self, x, objective: Parameter, constraints: typing.List[Parameter]):
+        """
+        Fancy math to optimizes the objective while keeping the constraints happy.
+        Uses black magic. I can't explain it
+        :param x: the densities of the structure
+        :param objective: the objective to be minimized
+        :param constraints: the additional constraints to be considered during optimization
+        :return: the updated structure, largest change
+        """
+        obj = objective.value
+        do = objective.gradient.flatten('F')[np.newaxis].T
+        constraints = np.array([c.value for c in constraints])
+        constraint_gradients = np.array([c.gradient.flatten('F')[np.newaxis].T for c in constraints])
+        xmma, _, _, _, _, _, _, _, _, self.low, self.upp = mmasub(len(constraints), x.size, self.iter,
+               x.flatten('F')[np.newaxis].T, self.min_densities, self.max_densities, self.x_old1, self.x_old2,
+               obj, do, constraints, constraint_gradients,
+               self.low, self.upp, self.a0, self.a, self.c, self.d, self.move)
+        self.x_old2[:] = self.x_old1.copy()
+        self.x_old1[:] = x.flatten('F')[np.newaxis].T
+        self.iter += 1
+        self.x_new[:] = xmma.flatten().reshape(self.shape, order="F")
+        change = abs(self.x_new - x).max()
+        return self.x_new, change
+
+    def method_of_moving_asymptotes(self, x, density, obj, do, dv):
+        """
+        Fancy math to optimizes the objective while keeping the constraints happy.
+        Uses black magic. I can't explain it
+        :param x: the structure
+        :param density: the filtered structure
+        :param obj: the object score
+        :param do: the objective gradient
+        :param dv: volume gradient
+        :return: updated structure, largest change
+        """
+        #  https://github.com/arjendeetman/TopOpt-MMA-Python/blob/master/Code/topopt.py
+        # todo *** using this would require an email and citation in any publications ***
+        f0val = obj  # the current value of the objective function
+        df0dx = do.flatten('F')[np.newaxis].T  # gradient of objective with respect to design
+        fval = np.array([[density.mean() - self.volfrac]])  # constraint values
+        dfdx = (dv.flatten('F')[np.newaxis])  # / (self.total_nodes * self.volfrac))[np.newaxis]  # gradient of each constraint with respect to design
+        xval = x.flatten('F')[np.newaxis].T  # design
+        xmma, _, _, _, _, _, _, _, _, self.low, self.upp = \
+            mmasub(self.total_constraints, self.total_nodes, self.iter,
+                   xval, self.min_densities, self.max_densities, self.x_old1, self.x_old2,
+                   f0val, df0dx, fval, dfdx,
+                   self.low, self.upp, self.a0, self.a, self.c, self.d, self.move)
+        self.x_old2[:] = self.x_old1.copy()
+        self.x_old1[:] = xval
+        self.iter += 1
+        self.x_new[:] = xmma.flatten().reshape(self.shape, order="F")
+        change = abs(self.x_new - x).max()
+        return self.x_new, change
+
+    def optimality_criteria(self, x: np.ndarray, dc: np.ndarray, dv: np.ndarray) -> typing.Tuple[np.ndarray, float]:
         """
         Applies the gradients from the sensitivity analysis to update the material distribution
         :param x: The density values of the array
@@ -374,27 +533,24 @@ class Optimizer:
         # OPTIMALITY CRITERIA UPDATE
         l1 = 0
         l2 = 1e9
-        move = 0.2
-        xnew = np.zeros(x.shape)
-        density = np.zeros(x.shape)
-        # looks like this imposes the volume constraint
-        while (l2 - l1) / (l1 + l2) > 1e-3:
+        while (l2 - l1) / (l1 + l2) > 1e-3:  # bisection search for lambda
             lmid = 0.5 * (l2 + l1)
             # max and min constrict between 0 and 1, move also limits the change
-            xnew[:] = np.maximum(0.0, np.maximum(x - move, np.minimum(1.0, np.minimum(x + move, x * np.sqrt(-dc / dv / lmid)))))
-            xnew[:] = coerce_elements(xnew)
-            #density[:] = Filter.smoothen(xnew)
+            self.x_new[:] = np.maximum(self.min_densities[0, 0], np.maximum(x - self.move,
+                            np.minimum(self.max_densities[0, 0], np.minimum(x + self.move,
+                            x * np.sqrt(-dc / dv / lmid)))))  # the sqrt is an arbitrary dampener
             f = Filter.instance
-            density[:] = np.array(f.weights * xnew.flatten("F") / f.net_weight.flatten("F")).reshape(density.shape, order="F")
-            if density.mean() > volfrac:  #
-                l1 = lmid
-            else:
-                l2 = lmid
-        change = abs(xnew - x).max()
-        return xnew, change
+            self.x_old1[:] = np.array(f.weights * self.x_new.flatten("F") / f.net_weight.flatten("F")).reshape(self.x_old1.shape, order="F")
+            if self.x_old1.mean() > self.volfrac: l1 = lmid
+            else: l2 = lmid
+        change = abs(self.x_new - x).max()
+        return self.x_new, change
 
 
 class LoadCase:
+    """
+    Simplified interface for applying load and affixing portions of the structure
+    """
     net_importance = 0
 
     def __init__(self, shape, importance):
@@ -413,37 +569,48 @@ class LoadCase:
     def relative_importance(self): return self.importance / self.net_importance
 
     def add_force(self, force, mask):
+        """
+        Applies force at the specified positions
+        :param force: the force (fx, fy, fy) to be applied
+        :param mask: where to be applied. True where to be applied, False everywhere else
+        :return: a reference to the modified self for chained commands
+        """
         self._forces[self._get_dof(mask)] = force
         return self
 
     def affix(self, mask):
+        """
+        Affix parts of the structure
+        :param mask: where should be affixed
+        :return: modified reference to self for chained commands
+        """
         self._dof_freedom[self._get_dof(mask)] = False
         return self
 
     def _get_dof(self, mask):
+        """
+        Private util method for converting mask into dof indices
+        :param mask: where in the mesh to refernces
+        :return: indices in terms of the DOF shape organization
+        """
         y, x, z = mask.shape
         i2, i1, i3 = np.where(mask > 0)
         load = i3 * x * y + i1 * y + (y - 1 - i2)
         return load
 
 
-def coerce_elements(x: np.ndarray) -> np.ndarray:
-    '''
-    This is where you can implement active and passive elements (ie requirements for each nodes are solid and empty)
-    Just rewrite the array at the specific indices to the values they need to be
-    :param x: The unmodified structure
-    :return: The modified structure
-    '''
-    # https://www.top3d.app/tutorials/active-and-passive-elements-top3d
-    return x  # current implementation has no active or passive elements
-
-
 def display_3d(structure: np.ndarray, strain: np.ndarray):
+    """
+    Displays the strucutre
+    :param structure: the densities of the structure
+    :param strain: the strain or stress on the structure
+    :return: None. Produces an image in Plots
+    """
     structure = np.swapaxes(np.flip(np.swapaxes(structure, 0, 2), 2), 0, 1)  # reorientate the structure
     strain = np.swapaxes(np.flip(np.swapaxes(strain, 0, 2), 2), 0, 1)
     shape = structure.shape
     y_nodes, x_nodes, z_nodes = shape
-    strain = np.minimum(1.0, strain / strain[structure > 0.5].max())
+    strain = np.minimum(1.0, strain / strain[structure > 0.1].max())
     total_nodes = x_nodes * y_nodes * z_nodes
     hue = 2 / 3 - strain * 2 / 3  # get red to blue hue depending on displacement
     saturation = np.ones(shape)  # always high saturation
@@ -455,7 +622,7 @@ def display_3d(structure: np.ndarray, strain: np.ndarray):
     ax = plt.figure().add_subplot(projection='3d')  # todo: look into interactivity so you can look around
     ax.set_box_aspect((y_nodes, x_nodes, z_nodes))
     blocks = np.zeros(structure.shape, dtype=bool)
-    blocks[structure > 0.5] = True
+    blocks[structure > 0.1] = True
     # blocks[0, 0, 4] = True
     ax.voxels(blocks, facecolors=rgba)
     plt.ion()
@@ -474,35 +641,37 @@ def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float,
 
     # prepare helper classes
     material = Material(0.3, 1.0, 1e-19, penal)  # define the material properties of you structure
-    modeler = FEA(shape, material)  # setup FEA analysis
+    modeler = FEA(shape, material)  # physics simulations
     f = Filter(rmin, shape)  # filter to prevent gaps
+    sens = SensitivityAnalysis(shape)  # find the gradients
+    opt = Optimizer(shape, volfrac)  # updates the structure to new distribution
 
     # Set loop counter and gradient vectors
     change = 1
-    optimizer = Optimizer(shape)  # the class that contains the optimization algorithm
     start_time = time.time()
     for loop in range(2000):
         if change < 0.01: break  # if you have reached the minimum its not worth continuing
-        # Setup and solve FE problem
         modeler.displace(density)
         # Objective and sensitivity
-        compliance_gradient, volume_gradient, obj = optimizer.compliance_sensitivity(density, modeler)
-        ds = optimizer.stress_sensitivity(density, modeler)
-        # Optimality criteria
-        x[:], change = optimizer.optimality_criteria(x, compliance_gradient, volume_gradient, volfrac)
+        compliance_gradient, volume_gradient, obj = sens.compliance_sensitivity(density, modeler)
+        ds = sens.stress_sensitivity(density, modeler)
+        x[:], change = opt.optimality_criteria(x, compliance_gradient, volume_gradient)
+        # x[:], change = opt.method_of_moving_asymptotes(x, density, modeler.compliance, compliance_gradient, volume_gradient)
         # Filter design variables
-        density[:] = np.array(f.weights * x.flatten("F") / f.net_weight.flatten("F")).reshape(density.shape, order="F") # smooth_filter(x)
-
+        density[:] = np.array(f.weights * x.flatten("F") / f.net_weight.flatten("F")).reshape(density.shape, order="F")  # smooth_filter(x)
         # Write iteration history to screen (req. Python 2.6 or newer)
         print(f"i: {loop} (avg {round((time.time()-start_time)/(loop+1), 2)} sec),\t"
               f"comp.: {round(modeler.compliance, 3)}\t"
-              f"Vol.: {round(density.mean(), 3)*100}%,\t"
+              f"Vol.: {round(density.mean()*100, 1)}%,\t"
               f"ch.: {round(change, 2)}")
-    display_3d(x, modeler.strain)
+    display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
     save(x, "test")
 
 
 def run_load():
+    """
+    Quickly load and display the last generated structure
+    """
     structure = load("test")
     shape = (y_nodes, x_nodes, z_nodes) = structure.shape
     num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom - format is [Fx1, Fy1, Fz1, Fx2 ... Fz#]
@@ -510,7 +679,7 @@ def run_load():
     material = Material(0.3, 1.0, 1e-19, 4)  # define the material properties of you structure
     modeler = FEA(shape, material)  # setup FEA analysis
     smooth_filter = Filter(1.5, shape)  # filter to prevent gaps
-    optimizer = Optimizer(shape)  # the class that contains the optimization algorithm
+    optimizer = SensitivityAnalysis(shape)  # the class that contains the optimization algorithm
     start_time = time.time()
     # Setup and solve FE problem
     modeler.displace(structure)
@@ -521,4 +690,4 @@ def run_load():
 
 if __name__ == '__main__':
     # run_load()
-    main(10, 10, 10, 0.3, 4, 2.5)
+    main(30, 10, 1, 0.3, 4, 1.5)
