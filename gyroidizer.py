@@ -1,11 +1,4 @@
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-from numpy import sin, cos, pi
-from skimage import measure
-from stl import mesh
-# matplotlib.use("TkAgg")
-# https://github.com/pbauermeister/matplotlib_gyroid
+from vedo import *
 
 
 def get_struct_param(density): return (1-density-0.501) / 0.3325
@@ -24,60 +17,52 @@ def lerp(density, x, y, z):  # check if this works
     ])
 
 
-def gyroid(x, y, z):
-    return cos(2*pi*x)*sin(2*pi*y) + cos(2*pi*y)*sin(2*pi*z) + cos(2*pi*z)*sin(2*pi*x) - strut_param
-
-def optimized_gyroid(x, y, z, strut_param):
-    pass
+def gyroid(x, y, z, t):
+    pi = 3.14159265
+    return cos(2*pi*x)*sin(2*pi*y) + cos(2*pi*y)*sin(2*pi*z) + cos(2*pi*z)*sin(2*pi*x) - t
 
 
-def gyroidize(density, resolution=25j):
+def optimized_gyroid(x, y, z, t):
+    v = gyroid(x, y, z, t)
+    penal = (0.45*t - 0.58)*(cos(2*x)*cos(2*y)+cos(2*y)*cos(2*z)+cos(2*z)*cos(2*x))
+    indices = np.where(abs(v)>1.41)
+    v[indices] -= penal[indices]
+    return v
+
+
+def gyroidize(density, resolution=15j):
     y_units, x_units, z_units = density.shape
     x, y, z = np.mgrid[0:x_units-1:(resolution*x_units), 0:y_units-1:(resolution*y_units), 0:z_units-1:(resolution*z_units)]
-
-    volume = cos(2*pi*x) * sin(2*pi*y) + cos(2*pi*y)*sin(2*pi*z) + cos(2*pi*z) * sin(2*pi*x) - get_struct_param(lerp(density, x, y, z))
-    vertices, faces, normals, vals = measure.marching_cubes(
-        volume, level=0,
-        spacing=(0.1, 0.1, 0.1),
-        allow_degenerate=False)
-    return vertices, faces
+    volume = optimized_gyroid(x, y, z, get_struct_param(lerp(density, x, y, z)))
+    mesh = gen_mesh(volume)
+    mesh.write("Structure.stl")
+    mesh.show()
 
 
 def compute_volume(resolution, x_units, y_units, z_units):
-    x, y, z = np.mgrid[0:x_units:resolution, 0:y_units:resolution,0:z_units:resolution]
-    volume = gyroid(x, y, z)
-    print((volume>0).mean())
-    vertices, faces, normals, vals = measure.marching_cubes(
-        volume, 0,
-        spacing=(0.1, 0.1, 0.1),
-        allow_degenerate=True)
-    return vertices, faces
+    x, y, z = np.mgrid[0:x_units:resolution*x_units, 0:y_units:resolution*y_units,0:z_units:resolution*z_units]
+    return optimized_gyroid(x, y, z, strut_param)
 
 
-def save_stl(vertices, faces, filename):
-    data = np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype)
-    m = mesh.Mesh(data, remove_empty_areas=False)
-    for i, f in enumerate(faces):
-        for j in range(3):
-            m.vectors[i][j] = vertices[f[j], :]
-    m.save(filename)#, mode=stl.Mode.ASCII)
+def gen_mesh(volume):
+    # Create a Volume, take the isosurface at 0, smooth and subdivide it
+    surface = Volume(volume).isosurface(0).smooth().lw(1)
+    solid = TessellatedBox(n=volume.shape).alpha(1)
+    solid.cut_with_mesh(surface)
+    gyr = merge(surface, solid)
+    return gyr
 
 
-def plot(vertices, faces):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot_trisurf(
-        vertices[:, 0], vertices[:, 1], faces, vertices[:, 2],
-        cmap='ocean',
-        lw=1)
-    plt.ion()
-    plt.show()
+def display(mesh):
+    plotter = Plotter(bg='wheat', bg2='lightblue', axes=5)
+    plotter.add_ambient_occlusion(10)
+    plotter.show(mesh)
 
 
 if __name__ == '__main__':
-    resolution = 30j
-    strut_param = get_struct_param(0.8)
-    vertices, faces = compute_volume(resolution, 2, 2, 2)
-    save_stl(vertices, faces, 'Gyroid.stl')
-    plot(vertices, faces)
-    plt.pause(0.02)
+    resolution = 15j
+    strut_param = get_struct_param(0.5)
+    vol = compute_volume(resolution, 6, 6, 6)
+    mesh = gen_mesh(vol)
+    mesh.write('Gyroid.stl')
+    display(mesh)

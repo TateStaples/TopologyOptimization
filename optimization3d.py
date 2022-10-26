@@ -144,12 +144,6 @@ class Material:
         return 1 / ((1 + nu) * (1 - 2 * nu)) * np.array(D)
 
     def stiffness(self, density: np.ndarray) -> np.ndarray:
-        # this gives youngs modulus
-        """
-        Calculate stiffness of the material given a material. Based on the Solid Isotropic Material Penalization (SIMP)
-        :param density: the density of the material
-        :return: the stiffness at each point in the structure
-        """
         # https://link.springer.com/article/10.1007/s11081-021-09675-3#Sec5 - Eq. 13
         return self.min_stiff + density ** self.penal * (self.max_stiff - self.min_stiff)
 
@@ -162,70 +156,13 @@ class Material:
         return self.penal * density ** (self.penal - 1) * (self.max_stiff - self.min_stiff)  # see equation 26 of matlab paper
 
 
-# https://www.sciencedirect.com/science/article/pii/S002076831400256X
 class Gyroid(Material):
-    # todo: gyroid
-    # https://www.sciencedirect.com/science/article/abs/pii/S0010448518300381?via%3Dihub  -https://sci-hub.ru/10.1016/j.cad.2018.06.003
-    # https://link.springer.com/article/10.1007/s00170-020-06542-w#Sec13
-    # https://www.researchgate.net/publication/317127642_Efficient_design_optimization_of_variable-density_cellular_structures_for_additive_manufacturing_Theory_and_experimental_validation
-    # https://link.springer.com/content/pdf/10.1007/s00170-020-06542-w.pdf
-    # https://www.tandfonline.com/doi/full/10.1080/0305215X.2020.1837790
-    # https://www.sciencedirect.com/science/article/pii/S2214860420309209
-    def __init__(self, base_material: Material):
-        self.base_material = base_material
-
-    def _elastic_matrix(self, density):
-        # https://onlinelibrary.wiley.com/doi/full/10.1002/pssb.202100081
-        # figure 10 - attained through numeric simulation
-        c11 = (0.0605 * np.exp(2.8659 * density) - 0.0605) * (1-self.base_material.poisson)
-        c12 = (0.0396 * np.exp(3.2513 * density) - 0.0396) * self.base_material.poisson
-        c44 = (0.1452 * np.exp(2.0729 * density) - 0.1452) * ((1 - 2 * self.base_material.poisson) / 2)
-        # figure 8
-        C = np.ndarray([
-            [c11, c12, c12, 0, 0, 0],
-            [c12, c11, c12, 0, 0, 0],
-            [c12, c12, c11, 0, 0, 0],
-            [0, 0, 0,       c44, 0, 0],
-            [0, 0, 0,       0, c44, 0],
-            [0, 0, 0,       0, 0, c44],
-        ])
-        return C
-
-    def _element_stiffness(self, density) -> np.ndarray:
-        # file:///Users/22staples/Downloads/applsci-12-02180.pdf
-        # https://www.mathworks.com/matlabcentral/fileexchange/67320-stiffness-matrix-for-8-node-hexahedron
-        C = self._elastic_matrix(density)
-        B = self.strain_matrix
-        gauss_point = [-1 / np.sqrt(3), 1 / np.sqrt(3)]
-        coordinates = np.zeros((8, 3));
-        length_x = length_y = length_z = 1
-        coordinates[1, :] = [-length_x / 2, -length_y / 2, -length_z / 2]
-        coordinates[2, :] = [ length_x / 2, -length_y / 2, -length_z / 2]
-        coordinates[3, :] = [ length_x / 2,  length_y / 2, -length_z / 2]
-        coordinates[4, :] = [-length_x / 2,  length_y / 2, -length_z / 2]
-        coordinates[5, :] = [-length_x / 2, -length_y / 2,  length_z / 2]
-        coordinates[6, :] = [ length_x / 2, -length_y / 2,  length_z / 2]
-        coordinates[7, :] = [ length_x / 2,  length_y / 2,  length_z / 2]
-        coordinates[8, :] = [-length_x / 2,  length_y / 2,  length_z / 2]
-
-        K = np.zeros((24, 24))
-        for xi1 in gauss_point:
-            for xi2 in gauss_point:
-                for xi3 in gauss_point:
-                    dShape = (1 / 8) * np.array([
-                        [-(1-xi2) * (1-xi3), (1-xi2) * (1-xi3), (1+xi2) * (1-xi3), -(1+xi2) * (1-xi3), -(1-xi2) * (1 + xi3), (1-xi2) * (1 + xi3), (1+xi2) * (1 + xi3), -(1+xi2) * (1 + xi3)],
-                        [-(1-xi1) * (1-xi3), -(1+xi1) * (1-xi3), (1+xi1) * (1-xi3), (1-xi1) * (1-xi3), -(1-xi1) * (1 + xi3), -(1+xi1) * (1 + xi3), (1+xi1) * (1 + xi3), (1-xi1) * (1 + xi3)],
-                        [-(1-xi1) * (1-xi2), -(1+xi1) * (1-xi2), -(1+xi1) * (1+xi2), -(1-xi1) * (1+xi2), (1-xi1) * (1-xi2), (1+xi1) * (1-xi2), (1+xi1) * (1+xi2), (1-xi1) * (1+xi2)]
-                    ])
-                    jacobian = dShape @ coordinates
-                    K[:] += B.T*C*B*np.linalg.det(jacobian)
-        return K
-
     def stiffness(self, density: np.ndarray) -> np.ndarray:
-        pass
+        # https://link.springer.com/article/10.1007/s00170-020-06542-w
+        return (-482.65 * np.power(density, 3) + np.power(density, 2) + 27.693 * density + self.min_stiff) * self.max_stiff / 3145e9
 
     def gradient(self, density: np.ndarray) -> np.ndarray:
-        pass
+        return (3 * -482.65 * np.power(density, 2) + np.power(density, 2) + 27.693 * density + self.min_stiff) * self.max_stiff / 3145e9  # ratio of titanium to PLA
 
 
 class Filter:  # fixme: move this out of a class and into a new file
@@ -309,13 +246,13 @@ class LoadCase:
         self._forces[self._get_dof(mask)] = force
         return self
 
-    def affix(self, mask):
+    def affix(self, mask, lock_x=True, lock_y=True, lock_z=True):
         """
         Affix parts of the structure
         :param mask: where should be affixed
         :return: modified reference to self for chained commands
         """
-        self._dof_freedom[self._get_dof(mask)] = False
+        self._dof_freedom[self._get_dof(mask)] = (not lock_x, not lock_y, not lock_z)
         return self
 
     def _get_dof(self, mask):
@@ -346,7 +283,7 @@ class LoadCase:
         fix_location = force_location.copy()
         force_location[y_nodes, :, :] = True
         fix_location[0, :, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, -1, 0), force_location).affix(fix_location)
+        load_case = LoadCase(shape, 1).add_force((0, -1, 0), force_location).affix(fix_location, lock_x=False, lock_z=False)
         return load_case
 
 
@@ -557,7 +494,7 @@ class SensitivityAnalysis:
         for i in range(0, self.total_nodes):
             index = index_matrix[:, i]
             # T2 = -𝜆.T * dKdx * U [Eq. 29]
-            dKdX = model.material.penal * density.flatten('F')[i] ** (model.material.penal - 1) * model.material.element_stiffness
+            dKdX = model.material.gradient(density).flatten('F') * model.material.element_stiffness
             T2[i] = -lamda[index].T @ dKdX @ model.displacement[index]
 
         DpnDx = T1 + T2
@@ -576,7 +513,7 @@ class Optimizer:
         self.total_nodes = n = x_ * y * z  # number of design variables
         self.volfrac = volfrac  # target volume fraction
         self.total_constraints = 1  # number of constraints
-        self.min_densities = 0 * np.ones((n, 1))  # minimum values for design
+        self.min_densities = 0.05 * np.ones((n, 1))  # minimum values for design
         self.max_densities = np.ones((n, 1))  # max values for design
         self.x_new = np.zeros(shape)
         self.x_old1 = np.zeros((n, 1))  # prev value - saved calculation value
@@ -672,6 +609,7 @@ class Display:
         self.ax.clear()
         self.ax.voxels(blocks, facecolors=rgba)
         plt.draw()
+        plt.show()
 
     def _animate(self, frame):  # fixme: make colors consistent
         struct, strain = self.shapes[frame]
@@ -707,7 +645,7 @@ def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float,
     """
     # 116e9
     material = Material(0.3, 1.0, 1e-19, penal)  # define the material properties of you structure
-    modeler = FEA(shape, material, LoadCase.bridge(shape))  # physics simulations
+    modeler = FEA(shape, material, LoadCase.table(shape))  # physics simulations
     f = Filter(rmin, shape)  # filter to prevent gaps
     sens = SensitivityAnalysis(shape)  # find the gradients
     opt = Optimizer(shape, volfrac)  # updates the structure to new distribution
@@ -741,6 +679,7 @@ def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float,
     modeler.calc_stress(x)
     # d.make_animation()
     d.display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
+    gyroidizer.gyroidize(x)
     save(x, "test")
 
 
@@ -749,10 +688,13 @@ def run_load():
     Quickly load and display the last generated structure
     """
     structure = load("test")
+    v, f = gyroidizer.gyroidize(structure)
+    gyroidizer.save_stl(v, f, "Structure.stl")
+    quit()
     shape = (y_nodes, x_nodes, z_nodes) = structure.shape
     num_dofs = 3 * (x_nodes + 1) * (y_nodes + 1) * (z_nodes + 1)  # number of degrees of freedom - format is [Fx1, Fy1, Fz1, Fx2 ... Fz#]
     displacements = np.zeros((num_dofs, 1))
-    material = Material(0.3, 1.0, 1e-19, 4)  # define the material properties of you structure
+    material = Gyroid(0.3, 1.0, 1e-19, 4)  # define the material properties of you structure
     modeler = FEA(shape, material, LoadCase.bridge(shape))  # setup FEA analysis
     smooth_filter = Filter(1.5, shape)  # filter to prevent gaps
     optimizer = SensitivityAnalysis(shape)  # the class that contains the optimization algorithm
@@ -761,9 +703,7 @@ def run_load():
     modeler.displace(structure)
     # Objective and sensitivity
     optimizer.compliance_sensitivity(structure, modeler)
-    v, f = gyroidizer.gyroidize(structure)
     # gyroidizer.plot(v, f)
-    gyroidizer.save_stl(v, f, "Structure.stl")
     # display_3d(structure, modeler.von_mises_stress.reshape(structure.shape, order="F"))
 
 
@@ -771,4 +711,4 @@ if __name__ == '__main__':
     q = 0.5  # 𝑞 is the stress relaxation parameter - prevent singularity
     p = 15  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
     # run_load()
-    main(10, 5, 2, 0.3, 3, 1.5)
+    main(8, 15, 8, 0.3, 3, 3.5)
