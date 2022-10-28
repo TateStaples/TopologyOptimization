@@ -1,6 +1,0 @@
-https://topopt.readthedocs.io/en/documentation/TopOpt.html#
-https://publish.illinois.edu/designlab/files/2019/04/Paper2.pdf
-
-stress and strain are not for topology optimization
-find a design where everywhere is below a minimum stress
-    - potentially ML max(stress) - yield -> this should never be positive or bad
