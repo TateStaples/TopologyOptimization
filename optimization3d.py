@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from scipy.sparse import linalg
 from matplotlib.colors import hsv_to_rgb
 import time
-from MMA import mmasub
 import gyroidizer
 import nlopt
 
@@ -307,7 +306,7 @@ class LoadCase:
         force_location[y_nodes, :, :] = True
         fix_location[y_nodes//2, :, :] = True
         f2[0, :, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, -4000, 0), force_location).add_force((0, 4000, 0), f2)\
+        load_case = LoadCase(shape, 1).add_force((0, -8000, 0), force_location).add_force((0, 8000, 0), f2)\
             .affix(fix_location, lock_x=False, lock_z=False)
         return load_case
 
@@ -532,100 +531,53 @@ class Parameter:
 
 
 class Optimizer:
-    def __init__(self, shape, volfrac):
-        """ ignore most of this shit. Initializing random values for mma"""
+    def __init__(self, shape, update):
         x, y, z = self.shape = shape
         self.total_nodes = n = x * y * z  # number of design variables
-        self.volfrac = volfrac  # target volume fraction
-        self.total_constraints = 2  # number of constraints
-        self.min_densities = 0 * np.ones((n, 1))  # minimum values for design
-        self.max_densities = np.ones((n, 1))  # max values for design
-        self.x_new = np.zeros(shape)
-        self.x_old1 = np.zeros((n, 1))  # prev value - saved calculation value
-        self.x_old2 = np.zeros((n, 1))  # value 2 ago - saved calculation value
-        self.low = self.min_densities.copy()  # asymptote - saved calculation value
-        self.upp = self.max_densities.copy()  # upper asymptote - saved calculation value
-        self.a0 = 0.0
-        self.a = np.zeros((self.total_constraints, 1))
-        self.c = 1e4 * np.ones((self.total_constraints, 1))
-        self.d = np.zeros((self.total_constraints, 1))
-        self.move = 0.2
-        self.iter = 0
-
-    def mma(self, x, objective: Parameter, constraints: typing.List[Parameter]):
-        """
-        Fancy math to optimizes the objective while keeping the constraints happy.
-        Uses black magic. I can't explain it
-        :param x: the densities of the structure
-        :param objective: the objective to be minimized
-        :param constraints: the additional constraints to be considered during optimization
-        :return: the updated structure, largest change
-        """
-        nlopt.opt(nlopt.LD_MMA)
-        obj = objective.value
-        do = objective.gradient.flatten('F')[np.newaxis].T
-        constraint_values = np.array([c.value - c.max for c in constraints])[np.newaxis].T
-        constraint_gradients = np.array([c.gradient.flatten('F') for c in constraints])
-        xmma, _, _, _, _, _, _, _, _, self.low, self.upp = mmasub(len(constraints), x.size, self.iter,
-               x.copy().flatten('F')[np.newaxis].T, self.min_densities, self.max_densities, self.x_old1, self.x_old2,
-               obj, do, constraint_values, constraint_gradients,
-               self.low, self.upp, self.a0, self.a, self.c, self.d, self.move)
-        self.x_old2[:] = self.x_old1.copy()
-        self.x_old1[:] = x.flatten('F')[np.newaxis].T
-        self.iter += 1
-        self.x_new[:] = xmma.flatten().reshape(self.shape, order="F")
-        change = abs(self.x_new - x).max()
-        return self.x_new, change
-
-    def optimality_criteria(self, x: np.ndarray, dc: np.ndarray, dv: np.ndarray) -> typing.Tuple[np.ndarray, float]:
-        """
-        Applies the gradients from the sensitivity analysis to update the material distribution
-        :param x: The density values of the array
-        :param dc: The derivative of compliance with respect to density
-        :param dv: Some sorta volume derivative
-        :return: The distribution of material of the structure, the max change
-        """
-        # OPTIMALITY CRITERIA UPDATE
-        l1 = 0
-        l2 = 1e9
-        while (l2 - l1) / (l1 + l2) > 1e-3:  # bisection search for lambda
-            lmid = 0.5 * (l2 + l1)
-            # max and min constrict between 0 and 1, move also limits the change
-            self.x_new[:] = np.maximum(self.min_densities[0, 0], np.maximum(x - self.move,
-                            np.minimum(self.max_densities[0, 0], np.minimum(x + self.move,
-                            x * np.sqrt(-dc / dv / lmid)))))  # the sqrt is an arbitrary dampener
-            f = Filter.instance
-            self.x_old1[:] = np.array(f.weights * self.x_new.flatten("F") / f.net_weight.flatten("F")).reshape(self.x_old1.shape, order="F")
-            if self.x_old1.mean() > self.volfrac: l1 = lmid
-            else: l2 = lmid
-        change = abs(self.x_new - x).max()
-        return self.x_new, change
-
-
-class Opt:
-    def __init__(self, shape, volfrac):
-        x, y, z = self.shape = shape
-        self.total_nodes = n = x * y * z  # number of design variables
-        self.volfrac = volfrac  # target volume fraction
-        self.total_constraints = 2  # number of constraints
-        self.min_densities = 1e-3 * np.ones((n, 1))  # minimum values for design
-        self.max_densities = np.ones((n, 1))  # max values for design
-        self.x_new = np.zeros(shape)
-        self.x_old1 = np.zeros((n, 1))  # prev value - saved calculation value
-        self.x_old2 = np.zeros((n, 1))  # value 2 ago - saved calculation value
-        self.low = self.min_densities.copy()  # asymptote - saved calculation value
-        self.upp = self.max_densities.copy()  # upper asymptote - saved calculation value
-        self.a0 = 0.0
-        self.a = np.zeros((self.total_constraints, 1))
-        self.c = 1e4 * np.ones((self.total_constraints, 1))
-        self.d = np.zeros((self.total_constraints, 1))
-        self.move = 0.2
-        self.iter = 0
-        self.opt = opt = nlopt.opt(nlopt.LD_MMA)
+        self.min_densities = 1e-3 * np.ones(n)  # minimum values for design
+        self.max_densities = np.ones(n)  # max values for design
+        self.opt = opt = nlopt.opt(nlopt.LD_MMA, n)
+        self.updater = update
+        self.results = None
+        self.change = 1
+        self.prev = np.ones(n)
+        self.iteration = 1
+        self.start_time = time.time()
         opt.set_lower_bounds(self.min_densities)
         opt.set_upper_bounds(self.max_densities)
-        opt.add_equality_constraint(h, tol=0.02)
-        opt.optimize()
+        opt.add_inequality_constraint(self.get_volume)
+        opt.add_inequality_constraint(self.get_stress)
+        opt.set_min_objective(self.get_compliance)
+        opt.set_ftol_rel(1e-4)
+
+    def optimize(self, x):
+        return self.opt.optimize(x)
+
+    def done(self):
+        return self.iteration > 2000 or self.change < 0.01
+
+    def get_compliance(self, x, grad):
+        self.change = abs(x-self.prev).max()
+        self.results = next(self.updater(x.reshape(self.shape, order='F')))
+        comp, vol, stress = self.results
+        if grad.size > 0: grad[:] = comp.gradient.flatten('F')
+        print(f"i: {self.iteration} ({round((time.time() - self.start_time), 2)}s),\t"
+              f"comp.: {round(comp.value)}\t"
+              f"stress: {round(stress.value)}\t"
+              f"vol.: {round(vol.value * 100, 1)}%,\t"
+              f"ch.: {round(self.change, 2)}")
+        self.prev[:] = x.copy(); self.iteration += 1; self.start_time = time.time()
+        return comp.value
+
+    def get_volume(self, x, grad):
+        _, vol, _ = self.results
+        if grad.size > 0: grad[:] = vol.gradient.flatten('F')
+        return vol.value - vol.max
+
+    def get_stress(self, x, grad):
+        _, _, stress = self.results
+        if grad.size > 0: grad[:] = stress.gradient.flatten('F')
+        return stress.value - stress.max
 
 
 class Display:
@@ -696,14 +648,12 @@ def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float,
     modeler = FEA(shape, material, LoadCase.bone(shape))  # physics simulations
     f = Filter(rmin, shape)  # filter to prevent gaps
     sens = SensitivityAnalysis(shape)  # find the gradients
-    opt = Optimizer(shape, volfrac)  # updates the structure to new distribution
     yield_stress = 730e6  # base titanium yield in 380 MPa
     d = Display(shape)
     # Set loop counter and gradient vectors
     change = 1
     start_time = time.time()
-    for loop in range(2000):
-        if change < 0.01: break  # if you have reached the minimum its not worth continuing
+    def update(density):
         modeler.displace(density)
         modeler.calc_strain(density)
         modeler.calc_stress(density)
@@ -713,17 +663,12 @@ def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float,
         compliance = Parameter(obj, compliance_gradient)
         volume = Parameter(x.mean(), volume_gradient, volfrac)
         stress = Parameter(modeler.max_stress, ds, yield_stress)
-        x[:], change = opt.mma(x, compliance, [volume, stress])
-        # x[:], change = opt.mma(x, stress, [volume])
-        # x[:], change = opt.optimality_criteria(x, compliance_gradient, volume_gradient)
-        # Filter design variables
-        density[:] = np.array(f.weights * x.flatten("F") / f.net_weight.flatten("F")).reshape(density.shape, order="F")  # smooth_filter(x) fixme
-        d.display_3d(x, modeler.strain.reshape(shape, order="F"))
-        print(f"i: {loop} ({round((time.time()-start_time), 2)} sec),\t"
-              f"comp.: {round(modeler.compliance)}\t"
-              f"Vol.: {round(density.mean()*100, 1)}%,\t"
-              f"ch.: {round(change, 2)}")
-        start_time = time.time()
+        yield compliance, volume, stress
+
+    opt = Optimizer(shape, update)  # updates the structure to new distribution
+    while not opt.done():
+        x = opt.opt.optimize(x.flatten('F'))
+    x = x.reshape(shape, order='F')
     modeler.calc_stress(x)
     # d.make_animation()
     d.display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
@@ -737,7 +682,7 @@ def run_load():
     Quickly load and display the last generated structure
     """
     structure = load("test2")
-    gyroidizer.gyroidize(structure)
+    gyroidizer.gyroidize(structure, scale=2, resolution=20j)
     quit()
     shape = (y_nodes, x_nodes, z_nodes) = structure.shape
     material = Gyroid(0.3, 1.0, 1e-19, 4)  # define the material properties of you structure
@@ -750,9 +695,8 @@ def run_load():
     Display(shape).display_3d(structure, modeler.von_mises_stress.reshape(structure.shape, order="F"))
     plt.show()
 
-
 if __name__ == '__main__':
     q = 0.5  # 𝑞 is the stress relaxation parameter - prevent singularity
     p = 15  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
-    # run_load()
-    main(200, 60, 1, 0.3, 3, 1.5)
+    run_load()
+    # main(8, 20, 8, 0.1, 3, 1.5)

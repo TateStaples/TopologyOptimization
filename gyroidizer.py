@@ -11,23 +11,25 @@ def lerp(density, x, y, z):  # check if this works
     return scipy.interpolate.interpn(grid, density, (y, x, z))
 
 
-def gyroid(x, y, z, t):
-    return cos(2*pi*x)*sin(2*pi*y) + cos(2*pi*y)*sin(2*pi*z) + cos(2*pi*z)*sin(2*pi*x) - t
+def gyroid(x, y, z, t, scale):
+    f = 2 * pi * scale
+    return cos(f*x)*sin(f*y) + cos(f*y)*sin(f*z) + cos(f*z)*sin(f*x) - t
 
 
-def optimized_gyroid(x, y, z, t):
-    v = gyroid(x, y, z, t)
-    penal = (0.45*t - 0.58)*(cos(2*x)*cos(2*y)+cos(2*y)*cos(2*z)+cos(2*z)*cos(2*x))
+def optimized_gyroid(x, y, z, t, scale):
+    v = gyroid(x, y, z, t, scale)
+    f = 2 * scale
+    penal = (0.45*t - 0.58)*(cos(f*x)*cos(f*y)+cos(f*y)*cos(f*z)+cos(f*z)*cos(f*x))
     indices = np.where(abs(v)>1.41)
     v[indices] -= penal[indices]
     return v
 
 
-def gyroidize(density, resolution=15j):
+def gyroidize(density, resolution=15j, scale=1):
     print("beginning gyroidization process")
     y_units, x_units, z_units = density.shape
     x, y, z = np.mgrid[0:x_units-1:(resolution*x_units), 0:y_units-1:(resolution*y_units), 0:z_units-1:(resolution*z_units)]
-    volume = optimized_gyroid(x, y, z, get_struct_param(lerp(density, x, y, z)))
+    volume = optimized_gyroid(x, y, z, get_struct_param(lerp(density, x, y, z)), scale)
     mesh = gen_mesh(volume)
     mesh.write("Structure.stl")
     display(mesh)
