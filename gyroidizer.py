@@ -37,7 +37,7 @@ def gyroidize(density, resolution=15j, scale=1):
 
 def compute_volume(resolution, x_units, y_units, z_units):
     x, y, z = np.mgrid[0:x_units:resolution*x_units, 0:y_units:resolution*y_units,0:z_units:resolution*z_units]
-    return optimized_gyroid(x, y, z, strut_param)
+    return optimized_gyroid(x, y, z, strut_param, 1)
 
 
 def gen_mesh(volume):
@@ -50,7 +50,7 @@ def gen_mesh(volume):
 
 
 def display(mesh):
-    plotter = Plotter(bg='wheat', bg2='lightblue', axes=5)
+    plotter = Plotter()#bg='wheat', bg2='lightblue', axes=5)
     # plotter.add_ambient_occlusion(10)
     print("showing")
     plotter.show(mesh)
@@ -58,8 +58,9 @@ def display(mesh):
 
 if __name__ == '__main__':
     resolution = 15j
-    strut_param = get_struct_param(0.5)
+    strut_param = get_struct_param(0.2)
     vol = compute_volume(resolution, 4, 4, 4)
     mesh = gen_mesh(vol)
+    mesh.color("green")
     mesh.write('Gyroid.stl')
-    # display(mesh)
+    display(mesh)
