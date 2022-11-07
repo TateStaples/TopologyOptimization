@@ -7,6 +7,7 @@ from scipy.sparse import *
 import typing
 import matplotlib.pyplot as plt
 from scipy.sparse import linalg
+from scipy.interpolate import interpn
 from matplotlib.colors import hsv_to_rgb
 import time
 import gyroidizer
@@ -168,10 +169,13 @@ class Gyroid(Material):
     """
     def stiffness(self, density: np.ndarray) -> np.ndarray:
         # https://link.springer.com/article/10.1007/s00170-020-06542-w
-        return (-482.65 * np.power(density, 3) + np.power(density, 2) + 27.693 * density + self.min_stiff) * self.max_stiff / 3145e6
+        # return (-482.65 * np.power(density, 3) + 938.34 * np.power(density, 2) + 27.693 * density + self.min_stiff) * self.max_stiff / 3145e6
+        # https://www.sciencedirect.com/science/article/pii/S1359645418306293
+        return 0.293 * np.power(density, 2) * self.max_stiff + self.min_stiff
 
     def gradient(self, density: np.ndarray) -> np.ndarray:
-        return (3 * -482.65 * np.power(density, 2) + np.power(density, 2) + 27.693 * density + self.min_stiff) * self.max_stiff / 3145e6  # ratio of titanium to PLA
+        # return (3 * -482.65 * np.power(density, 2) + 2 * 938.34 * density + 27.693) * self.max_stiff / 3145e6  # ratio of titanium to PLA
+        return 2 * 0.293 * density * self.max_stiff
 
 
 class Filter:  # fixme: move this out of a class and into a new file
@@ -280,7 +284,7 @@ class LoadCase:
         return load
 
     @staticmethod
-    def bridge(shape: typing.Tuple[int, int, int]):
+    def cantilever(shape: typing.Tuple[int, int, int]):
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
@@ -290,26 +294,42 @@ class LoadCase:
         return load_case
 
     @staticmethod
-    def table(shape: typing.Tuple[int, int, int]):
-        y_nodes, x_nodes, z_nodes = shape
-        force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
-        fix_location = force_location.copy()
-        force_location[y_nodes, :, :] = True
-        fix_location[0, :, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, 1, 0), force_location).affix(fix_location, lock_x=False, lock_z=False)
-        return load_case
-
-    @staticmethod
-    def bone(shape: typing.Tuple[int, int, int]):
+    def compress(shape: typing.Tuple[int, int, int]):
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
         f2 = force_location.copy()
         force_location[y_nodes, :, :] = True
-        fix_location[y_nodes//2, :, :] = True
         f2[0, :, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, -8000, 0), force_location).add_force((0, 8000, 0), f2)\
-            .affix(fix_location, lock_x=False, lock_z=False)
+        # fix_location[0, :, :] = True
+        load_case = LoadCase(shape, 1).add_force((0, -10000, 0), force_location).affix(fix_location, lock_x=False, lock_z=False).add_force((0, 10000, 0), f2)
+        return load_case
+
+    @staticmethod
+    def table(shape: typing.Tuple[int, int, int]):
+        y_nodes, x_nodes, z_nodes = shape
+        force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
+        fix_location = force_location.copy()
+        # f2 = force_location.copy()
+        force_location[y_nodes, :, :] = True
+        # f2[0, :, :] = True
+        fix_location[0, :, :] = True
+        load_case = LoadCase(shape, 1).add_force((0, -10000, 0), force_location).affix(fix_location, lock_x=False,lock_z=False)  # .add_force((0, 10000, 0), f2)
+        return load_case
+
+    @staticmethod
+    def torsion(shape):
+        y_nodes, x_nodes, z_nodes = shape
+        force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
+        fix_location = force_location.copy()
+        fix_location[0, :, :] = True
+        load_case = LoadCase(shape, .1).affix(fix_location)
+        for x in (x_nodes + 1):
+            for z in (z_nodes + 1):
+                m = force_location.copy()
+                m[y_nodes, x, z] = True
+                f = ()  # todo: define as right angle to center
+                load_case.add_force(f, m)
         return load_case
 
 
@@ -544,7 +564,8 @@ class Optimizer:
         self.total_nodes = n = x * y * z  # number of design variables
         self.min_densities = 0.05 * np.ones(n)  # minimum values for design
         self.max_densities = np.ones(n)  # max values for design
-        self.max_densities[passive_elem] = 0; self.min_densities[passive_elem] = 0
+        self.passive = passive_elem.flatten('F')
+        self.min_densities[self.passive] = 1e-9; self.max_densities[self.passive] = 1e-9;
         self.opt = opt = nlopt.opt(nlopt.LD_MMA, n)
         self.updater = update
         self.results = None
@@ -554,41 +575,59 @@ class Optimizer:
         self.start_time = time.time()
         opt.set_lower_bounds(self.min_densities)
         opt.set_upper_bounds(self.max_densities)
+        opt.set_maxeval(2000)
         opt.set_xtol_abs(0.01)
         # opt.set_ftol_rel(1e-4)
 
     def optimize(self, x, obj, *constraints):
+        shape = x.shape
+        x = x.flatten('F')
+        x[:] = np.minimum(np.maximum(x, self.min_densities), self.max_densities)
         for c in constraints:
             self.opt.add_inequality_constraint(c)
         self.opt.set_min_objective(self.objective(obj))
-        return self.opt.optimize(x)
+        return self.opt.optimize(x).reshape(shape, order='F')
 
     def objective(self, func):
         def obj(x, grad):
             self.change = abs(x - self.prev).max()
-            print(f"itr:{self.iteration}\t∆x:{round(self.change, 2)} ({round(time.time() - self.start_time, 2)} s)", end='\t')
+            print(f"itr:{self.iteration}\t∆x:{round(self.change, 3)} ({round(time.time() - self.start_time, 2)} s)", end='\t')
+            self.prev[:] = x.copy();
+            self.iteration += 1;
+            self.start_time = time.time()
             self.updater(x.reshape(self.shape, order='F'))
-            self.prev[:] = x.copy(); self.iteration += 1; self.start_time = time.time()
             return func(x, grad)
         return obj
 
 
 class Display:
     def __init__(self, shape):
-        # matplotlib.use("TkAgg")
+        matplotlib.use("TkAgg")
         (y_nodes, x_nodes, z_nodes) = shape
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(projection='3d')
         self.ax.set_box_aspect((x_nodes, z_nodes, y_nodes))
         plt.ion()
         self.shapes = list()
+        self.max = 0
 
-    def display_3d(self, structure: np.ndarray, strain: np.ndarray):
-        self.shapes.append((structure, strain))
-        structure = np.swapaxes(np.flip(np.swapaxes(structure, 0, 2), 2), 0, 1)  # reorientate the structure
-        strain = np.swapaxes(np.flip(np.swapaxes(strain, 0, 2), 2), 0, 1)
+    def display_3d(self, structure: np.ndarray, strain: np.ndarray, max_strain=None):
+        self.shapes.append((structure.copy(), strain.copy()))
+        structure = self._restructure(structure)
+        strain = self._restructure(strain)
+        rgba = self._colors(structure, strain)
+        # https://www.tutorialspoint.com/how-to-get-an-interactive-plot-of-a-pyplot-when-using-pycharm
+        blocks = np.zeros(structure.shape, dtype=bool)
+        blocks[structure > 0.05] = True  # hide everything below default density
+        self.ax.clear()
+        self.ax.voxels(blocks, facecolors=rgba)
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+    def _colors(self, structure, strain):
         y_nodes, x_nodes, z_nodes = shape = structure.shape
-        strain = np.minimum(1.0, strain / strain[structure > 0.1].max())
+        self.max = max(self.max, strain.max())
+        strain = np.minimum(1.0, strain / self.max)
         total_nodes = x_nodes * y_nodes * z_nodes
         hue = 2 / 3 - strain * 2 / 3  # get red to blue hue depending on displacement
         saturation = np.ones(shape)  # always high saturation
@@ -597,109 +636,71 @@ class Display:
         rgb = hsv_to_rgb(hsv.reshape((total_nodes, 3))).reshape((*shape, 3))  # convert to accepted format
         alpha = structure.reshape((*shape, 1))
         rgba = np.concatenate((rgb, alpha), axis=3)  # same thing with tranparency equal to density
-        # https://www.tutorialspoint.com/how-to-get-an-interactive-plot-of-a-pyplot-when-using-pycharm
-        blocks = np.zeros(structure.shape, dtype=bool)
-        blocks[structure > 0.05] = True
-        # blocks[0, 0, 4] = True
-        self.ax.clear()
-        self.ax.voxels(blocks, facecolors=rgba)
-        plt.draw()
+        return rgba
+
+    def _restructure(self, structure):
+        return np.swapaxes(np.flip(np.swapaxes(structure, 0, 2), 2), 0, 1)
 
     def _animate(self, frame):  # fixme: make colors consistent
         struct, strain = self.shapes[frame]
         self.display_3d(struct, strain)
         return self.ax
 
-    def make_animation(self):
+    def make_animation(self, fname):
         from matplotlib.animation import FuncAnimation
         ani = FuncAnimation(self.fig, self._animate, frames=len(self.shapes), interval=100)
         # Save as gif
-        ani.save('animation.gif', fps=5)
-        plt.show()
+        ani.save(f'data/ani/{fname}.gif', fps=5)
+
+    def save(self, filename):
+        self.fig.savefig("data/imgs/"+filename)
 
 
-def create_cylinder_mask(length, height):
-    center = (int(length/2), int(length/2))
-    radius = length/2 + 1/np.sqrt(2)  # to include extras
-
-    Y, X, Z = np.ogrid[:length, :length, :height]
+def passive_cylinder(shape):
+    height, diameter, d2 = shape
+    assert diameter == d2, "Not square face"
+    center = (diameter-1) / 2, (diameter-1)/ 2
+    radius = diameter / 2 + 1 / np.sqrt(2)  # to include extras
+    Y, X = np.ogrid[:diameter, :diameter]
     dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
-
-    mask = dist_from_center <= radius
+    x1, z1 = np.where(dist_from_center <= radius)
+    mask = np.ones(shape, dtype=bool)
+    mask[:, x1, z1] = False
     return mask
-def save(structure: np.ndarray, filename: str) -> None: np.save(filename+".npy", structure)
-def load(filename: str) -> np.ndarray: return np.load(filename+".npy")
+def dof_passive(shape):
+    height, diameter, d2 = shape
+    assert diameter == d2, "Not square face"
+    center = diameter / 2, diameter / 2
+    radius = diameter / 2
+    Y, X = np.ogrid[:diameter+1, :diameter+1]
+    dist_from_center = np.sqrt((X - center[0]) ** 2 + (Y - center[1]) ** 2)
+    x1, z1 = np.where(dist_from_center <= radius)
+    mask = np.ones((height+1, d2+1, d2+1), dtype=bool)
+    mask[:, x1, z1] = False
+    return mask
+def save(structure: np.ndarray, filename: str) -> None: np.save("data/struct/"+filename+".npy", structure)
+def load(filename: str) -> np.ndarray: return np.load("data/struct/"+filename+".npy")
+def load_cache(filename: str, radius: int, height: int):
+    original = load(filename)
+    y, x, z = original.shape
+    Y, X, Z = np.mgrid[0:y:y/height, 0:x:x/radius/2, 0:z:z/radius/2]
+    return interpn([range(0, i) for i in original.shape], original, (Y, X, Z))
 
 
-def main(x_nodes: int, y_nodes: int, z_nodes: int, volfrac: float, penal: float, rmin: float, cyl=True):
-    shape = (y_nodes, x_nodes, z_nodes)  # the shape of our grid - used to create arrays
-    # Allocate design variables (as array), initialize and allocate sens.
-    x = volfrac * np.ones(shape, dtype=float)  # start as a homogenous solid
-
-    # prepare helper classes
-    """
-    Defining units:
-    - Force: Newtons (N)
-    - Displacement: meters (m)
-    - Stiffness: N * m
-    - Stress: N / m^2 (ie Pascals (pa))
-    """
-    # 119e9
-    material = Material(0.3, 119e9, 1e-19, penal)  # define the material properties of you structure
-    modeler = FEA(shape, material, LoadCase.bridge(shape))  # physics simulations
-    f = Filter(rmin, shape)  # filter to prevent gaps
-    sens = SensitivityAnalysis(shape)  # find the gradients
-    yield_stress = 730e6  # base titanium yield in 380 MPa
-    d = Display(shape)
-    # Set loop counter and gradient vectors
-
-    def update(density):
-        print()
-        density = density.reshape(shape, order='F')
-        modeler.displace(density)
-
-    def vol_update(density, grad):
-        density = density.reshape(shape, order='F')
-        if grad.size > 0: grad[:] = sens.dv.flatten('F')
-        mean = density.mean()
-        print(f"Vol: {round(mean*100,1)}", end="\t")
-        return mean-volfrac
-
-    def stress_update(density, grad):
-        density = density.reshape(shape, order='F')
-        modeler.calc_stress(density)
-        if grad.size > 0: grad[:] = sens.stress_sensitivity(density, modeler).flatten('F')
-        print(f"Stress: {round(modeler.max_stress, 2)}", end="\t")
-        return modeler.max_stress-yield_stress
-
-    def compliance_update(density, grad):
-        density = density.reshape(shape, order='F')
-        modeler.calc_strain(density)
-        if grad.size > 0: grad[:] = sens.compliance_sensitivity(density, modeler).flatten('F')
-        print(f"Comp:{round(modeler.compliance, 2)}", end="\t")
-        return modeler.compliance
-
-    opt = Optimizer(shape, update)  # updates the structure to new distribution
-    x = opt.optimize(x.flatten('F'), compliance_update, stress_update, vol_update)
-    x = x.reshape(shape, order='F')
-    modeler.calc_stress(x)
-    # d.make_animation()
-    save(x, "test2")
-    d.display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
-    plt.show()
-    gyroidizer.gyroidize(x)
-
-
-def project(radius: int, height: int) -> vedo.Mesh:
+def project(radius: int, height: int, cache: str = None):
     shape = (height, radius*2, radius*2)  # the shape of our grid - used to create arrays
+    passive = passive_cylinder(shape)
     # Allocate design variables (as array), initialize and allocate sens.
-    volfrac = 0.12
-    x = volfrac * np.ones(shape, dtype=float)  # start as a homogenous solid
-    material = Material(0.3, 119e9, 1e-19, 3)  # define the material properties of you structure
-    modeler = FEA(shape, material, LoadCase.bridge(shape))  # physics simulations
-    f = Filter(1.5, shape)  # filter to prevent gaps
+    volfrac = 0.12 * (np.pi/4)  # mult density times volume ratio of cylinder vs rect prism
+    x = volfrac * np.ones(shape, dtype=float) if cache is None else load_cache(cache, radius, height)
+    material = Gyroid(0.3, 119e9, 1e-19, 3)  # define the material properties of you structure
+    load1 = LoadCase.table(shape).add_force((0, 0, 0), dof_passive(shape))
+    # load2 = LoadCase.torsion(shape)
+    # https://www.sciencedirect.com/science/article/pii/S1359645418306293
+    modeler = FEA(shape, material, load1)  # physics simulations
+    f = Filter(2.5, shape)  # filter to prevent gaps
     sens = SensitivityAnalysis(shape)  # find the gradients
-    yield_stress = 730e6  # base titanium yield in 380 MPa
+    yield_stress = 40e6  # base titanium yield in 380 MPa
     d = Display(shape)
 
     # Set loop counter and gradient vectors
@@ -726,43 +727,58 @@ def project(radius: int, height: int) -> vedo.Mesh:
     def compliance_update(density, grad):
         density = density.reshape(shape, order='F')
         modeler.calc_strain(density)
+        d.display_3d(density, modeler.strain)
+        plt.show()
         if grad.size > 0: grad[:] = sens.compliance_sensitivity(density, modeler).flatten('F')
         print(f"Comp:{round(modeler.compliance, 2)}", end="\t")
         return modeler.compliance
 
     opt = Optimizer(shape, update, passive)  # updates the structure to new distribution
-    x = opt.optimize(x.flatten('F'), compliance_update, stress_update, vol_update)
-    x = x.reshape(shape, order='F')
+    x[:] = np.maximum(opt.min_densities.reshape(x.shape, order='F'), x)
+    try:
+        x = opt.optimize(x, compliance_update, vol_update)
+    except KeyboardInterrupt:
+        save(x, "saved_progress")
+        print("optimization interrupted by user request")
+        quit()
     modeler.calc_stress(x)
-    # d.make_animation()
-    save(x, "test2")
+    fname = f"gr{radius}h{height}" if isinstance(material, Gyroid) else f"r{radius}h{height}"
+    save(x, fname)
+    d.make_animation(fname)
     d.display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
     plt.show()
-    gyroidizer.gyroidize(x)
+    d.save(fname)
+    # mesh = gyroidizer.gyroidize(x)
+    # return mesh
 
 
-
-def run_load():
+def run_load(fname):
     """
     Quickly load and display the last generated structure
     """
-    structure = load("12x50x12")
-    gyroidizer.gyroidize(structure, scale=1, resolution=10j)
+    structure = load(fname)
+    gyroidizer.gyroidize(structure, scale=1/2, resolution=18j)
     quit()
     shape = (y_nodes, x_nodes, z_nodes) = structure.shape
-    material = Gyroid(0.3, 1.0, 1e-19, 4)  # define the material properties of you structure
-    modeler = FEA(shape, material, LoadCase.bridge(shape))  # setup FEA analysis
-    smooth_filter = Filter(1.5, shape)  # filter to prevent gaps
+    material = Gyroid(0.3, 116e9, 1e-19, 4)  # define the material properties of you structure
+    modeler = FEA(shape, material, LoadCase.compress(shape))  # setup FEA analysis
+    smooth_filter = Filter(2.5, shape)  # filter to prevent gaps
     # Setup and solve FE problem
     modeler.displace(structure)
     # Objective and sensitivity
     modeler.calc_stress(structure)
-    Display(shape).display_3d(structure, modeler.von_mises_stress.reshape(structure.shape, order="F"))
+    d = Display(shape)
+    d.display_3d(structure, modeler.von_mises_stress.reshape(structure.shape, order="F"))
     plt.show()
+    d.save(fname)
 
 
 if __name__ == '__main__':
     q = 0.5  # 𝑞 is the stress relaxation parameter - prevent singularity
     p = 10  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
-    run_load()
+    project(8, 50)
+    # project(10, 100)
+    # project(16, 100)
+    # project(20, 100)
+    # run_load("gr6h30")
     # main(40, 15, 6, 0.3, 3, 1.5)

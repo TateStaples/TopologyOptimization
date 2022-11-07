@@ -1,35 +1,6 @@
 Priorities:
-- cached
-- cyclinder
 - torsion case
-
-Questions:
-- Demonstration
-    - Squish Cube
-    - gyroidizer
-    - talk stress vs compliance** optimization
-        - compress (look at weight) & torsion (1 or 2 degree)
-    - talk isotropic assumption -> fine
-- input
-    - format -> cylinder
-    - symmetries -> can be assumed
-    - more specific goals -> research or product
-- testing - test numerically
-    - load cases (units for loads)
-    - get some help with unit issues
-    - press
-    - safety factor on stress
 
 Optimizer:
     Multiple load cases
     get help with units
-    Cached input
-    update gyroid scaling laws **
-
-Gyroidizer:
-    colored display
-    update to mask the input shape
-
-General:
-    get input format
-    set passive elements

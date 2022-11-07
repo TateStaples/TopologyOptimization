@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import scipy.interpolate
 from numpy import pi
 from vedo import *
@@ -8,6 +9,8 @@ def get_struct_param(density): return (1-density-0.501) / 0.3325
 
 def lerp(density, x, y, z):  # check if this works
     grid = [range(0, i) for i in density.shape]
+    ep = 1e-5
+    x, y, z = np.minimum(x, density.shape[1]-1), np.minimum(y, density.shape[0]-1), np.minimum(z, density.shape[2]-1)
     return scipy.interpolate.interpn(grid, density, (y, x, z))
 
 
@@ -28,11 +31,12 @@ def optimized_gyroid(x, y, z, t, scale):
 def gyroidize(density, resolution=15j, scale=1):
     print("beginning gyroidization process")
     y_units, x_units, z_units = density.shape
-    x, y, z = np.mgrid[0:x_units-1:(resolution*x_units), 0:y_units-1:(resolution*y_units), 0:z_units-1:(resolution*z_units)]
+    x, y, z = np.mgrid[0:x_units-1:(resolution*x_units*scale), 0:y_units-1:(resolution*y_units*scale), 0:z_units-1:(resolution*z_units*scale)]
     volume = optimized_gyroid(x, y, z, get_struct_param(lerp(density, x, y, z)), scale)
     mesh = gen_mesh(volume)
-    mesh.write("Structure.stl")
+    mesh.write("data/stl/Structure.stl")
     display(mesh)
+    return mesh
 
 
 def compute_volume(resolution, x_units, y_units, z_units):
@@ -43,9 +47,10 @@ def compute_volume(resolution, x_units, y_units, z_units):
 def gen_mesh(volume):
     # Create a Volume, take the isosurface at 0, smooth and subdivide it
     surface = Volume(volume).isosurface(0).smooth().lw(1)
-    solid = TessellatedBox(n=volume.shape).alpha(1)
-    solid.cut_with_mesh(surface)
-    gyr = merge(surface, solid)
+    # solid = TessellatedBox(n=volume.shape).alpha(1) if envelope is None else envelope
+    x, y, z = volume.shape
+    surface.cut_with_cylinder((x//2, 0, z//2), axis=(0, 1, 0), r=x//2)
+    gyr = surface.fill_holes()
     return gyr
 
 
@@ -57,10 +62,10 @@ def display(mesh):
 
 
 if __name__ == '__main__':
-    resolution = 15j
+    resolution = 12j
     strut_param = get_struct_param(0.2)
     vol = compute_volume(resolution, 4, 4, 4)
     mesh = gen_mesh(vol)
-    mesh.color("green")
-    mesh.write('Gyroid.stl')
+    # mesh.color("green")
+    mesh.write('data/stl/Gyroid.stl')
     display(mesh)
