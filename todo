@@ -1,29 +1,6 @@
 Priorities:
-- MMA
-- Iterative Solver
-- cached
-
-Questions:
-- input
-- load cases
-- testing
-- safety factor on stress
+- torsion case
 
 Optimizer:
     Multiple load cases
-    Symmetry optimization
-    MMA effective usage
-        get help with units
-    iterative solver that is actually faster
-    Cached input
-    update gyroid scaling laws
-
-Gyroidizer:
-    allow for empty unit cells
-    colored display
-    update to mask the input shape
-    edges
-
-General:
-    get input format
-    set passive elements
+    get help with units
