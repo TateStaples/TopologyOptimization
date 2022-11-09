@@ -54,7 +54,7 @@ class Optimizer:
     def objective(self, func):
         def obj(x, grad):
             self.change = abs(x - self.prev).max()
-            print(f"itr:{self.iteration}\t∆x:{round(self.change, 3)} ({round(time.time() - self.start_time, 2)} s)", end='\t')
+            print(f"itr:{self.iteration}\t∆x:{round(self.change*100, 1)}% ({round(time.time() - self.start_time, 2)} s)", end='\t')
             self.prev[:] = x.copy();
             self.iteration += 1;
             self.start_time = time.time()

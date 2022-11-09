@@ -52,7 +52,7 @@ def project(radius: int, height: int, units_per_meter=1, cache: str = None):
         modeler.calc_stress(density)
         # d.display_3d(density, modeler.von_mises_stress.reshape(shape, order="F"))
         if grad.size > 0: grad[:] = stress_sensitivity(density, modeler).flatten('F')
-        print(f"Stress: {utils.unscale_stress(round(modeler.max_stress, 2))}", end="\t")
+        print(f"Stress: {round(utils.unscale_stress(modeler.max_stress), 2)} ({round(modeler.max_stress/yield_stress, 2)})", end="\t")
         return modeler.max_stress - yield_stress
 
     def compliance_update(density, grad):
@@ -79,17 +79,7 @@ def project(radius: int, height: int, units_per_meter=1, cache: str = None):
     d.display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
     d.show()
     d.save(fname)
-    # mesh = gyroidizer.gyroidize(x)
-    # return mesh
 
 
 if __name__ == '__main__':
-    q = 0.1  # 𝑞 is the stress relaxation parameter - prevent singularity
-    p = 10  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
-    # stress_test()
-    # project(10, 50, cache="gr10h50")
-
-    project(5, 30)
-    # project(16, 100)
-    # project(20, 100)
-    # run_load("gr20h100")
+    project(20, 50, units_per_meter=1000/3)
