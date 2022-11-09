@@ -32,6 +32,7 @@ def gyroidize(density, resolution=15j, scale=1):
     y_units, x_units, z_units = density.shape
     x, y, z = np.mgrid[0:x_units-1:(resolution*x_units*scale), 0:y_units-1:(resolution*y_units*scale), 0:z_units-1:(resolution*z_units*scale)]
     volume = optimized_gyroid(x, y, z, get_struct_param(lerp(density, x, y, z)), scale)
+    print("Volume Density:", (volume > 0).mean())
     mesh = gen_mesh(volume)
     mesh.write("data/stl/Structure.stl")
     display(mesh)

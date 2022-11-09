@@ -5,8 +5,12 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interpn
 
 
-class Display:  # todo: add documentation
+class Display:
     def __init__(self, shape):
+        """
+        Setup the shared fig and parameters for future calls
+        :param shape: the dimensions of the structure array
+        """
         matplotlib.use("TkAgg")
         (y_nodes, x_nodes, z_nodes) = shape
         self.fig = plt.figure()
@@ -16,7 +20,14 @@ class Display:  # todo: add documentation
         self.shapes = list()
         self.max = 0
 
-    def display_3d(self, structure: np.ndarray, strain: np.ndarray, max_strain=None):
+    def display_3d(self, structure: np.ndarray, strain: np.ndarray):
+        """
+        Display the structure into Matplotlib
+        Opacity = density, strain= blue->red scale
+        :param structure: the densities at each location
+        :param strain: the strain or stress at each element
+        :return:
+        """
         self.shapes.append((structure.copy(), strain.copy()))
         structure = self._restructure(structure)
         strain = self._restructure(strain)
@@ -30,6 +41,7 @@ class Display:  # todo: add documentation
         self.fig.canvas.flush_events()
 
     def _colors(self, structure, strain):
+        """Private method to calculate the face colors in the voxel array"""
         y_nodes, x_nodes, z_nodes = shape = structure.shape
         self.max = max(self.max, strain.max())
         strain = np.minimum(1.0, strain / self.max)
@@ -44,9 +56,11 @@ class Display:  # todo: add documentation
         return rgba
 
     def _restructure(self, structure):
+        """Reshape the array from calculation shape the Matplot shape"""
         return np.swapaxes(np.flip(np.swapaxes(structure, 0, 2), 2), 0, 1)
 
     def _animate(self, frame):
+        """Draw the frame of the structure on iteration {frame}"""
         struct, strain = self.shapes[frame]
         self.display_3d(struct, strain)
         return self.ax
@@ -58,7 +72,12 @@ class Display:  # todo: add documentation
         ani.save(f'data/ani/{fname}.gif', fps=5)
 
     def save(self, filename):
+        """Save the current state of the display to the imgs data folder"""
         self.fig.savefig("data/imgs/"+filename)
+
+    def show(self):
+        """Show the Display state"""
+        self.fig.show()
 
 
 # saving and load of struct densities
@@ -71,6 +90,7 @@ def load(filename: str) -> np.ndarray:
 
 
 def load_cache(filename: str, radius: int, height: int):
+    """Load the cached structure and morph into the new shape"""
     original = load(filename)
     y, x, z = original.shape
     Y, X, Z = np.mgrid[0:y:y/height, 0:x:x/radius/2, 0:z:z/radius/2]

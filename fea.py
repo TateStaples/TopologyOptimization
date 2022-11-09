@@ -5,10 +5,10 @@ from materials import Material
 from load import LoadCase
 import numpy as np
 
-
-## Hyperparameters
+# Hyperparameters
 stress_relaxation = 0.1  # 𝑞 is the stress relaxation parameter - prevent singularity
 norm_aggregation = 10  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
+
 
 class FEA:
     """

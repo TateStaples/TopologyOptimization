@@ -1,3 +1,6 @@
+import numpy as np
+
+
 def passive_cylinder(shape):
     height, diameter, d2 = shape
     assert diameter == d2, "Not square face"
@@ -9,6 +12,8 @@ def passive_cylinder(shape):
     mask = np.ones(shape, dtype=bool)
     mask[:, x1, z1] = False
     return mask
+
+
 def dof_passive(shape):
     height, diameter, d2 = shape
     assert diameter == d2, "Not square face"
@@ -22,7 +27,5 @@ def dof_passive(shape):
     return mask
 
 units_per_meter = 1
-def scale_stress(x): return x * units_per_meter**2
-def unscale_stress(x): return x / units_per_meter**2
-def scale_stiffness(x): return x / units_per_meter**2
-def unscale_stiffness(x): return x * units_per_meter
+def scale_stress(x): return x / units_per_meter**2  # N/m^2 --> N//d^2
+def unscale_stress(x): return x * units_per_meter**2  # N/d^2 --> N/m^2

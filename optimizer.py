@@ -10,6 +10,12 @@ class Parameter:
 
 class Optimizer:
     def __init__(self, shape, update, passive_elem=()):
+        """
+        Set up the optimization parameters
+        :param shape: shape of the structure
+        :param update: the code called periodically between each cycle
+        :param passive_elem: where the contents should stay at min
+        """
         x, y, z = self.shape = shape
         self.total_nodes = n = x * y * z  # number of design variables
         self.min_densities = 0.05 * np.ones(n)  # minimum values for design
@@ -29,7 +35,14 @@ class Optimizer:
         opt.set_xtol_abs(0.01)
         # opt.set_ftol_rel(1e-4)
 
-    def optimize(self, x, obj, *constraints):
+    def optimize(self, x, obj, *constraints) -> np.ndarray:
+        """
+        Starts the optimization loop
+        :param x: the initial structure design
+        :param obj: The objective function. Should be of form(density, grad) -> score & update grad array
+        :param constraints: Sequence of inequality constraints of form(density, grad) -> score & update grad array
+        :return: The optimized structure
+        """
         shape = x.shape
         x = x.flatten('F')
         x[:] = np.minimum(np.maximum(x, self.min_densities), self.max_densities)
@@ -38,7 +51,6 @@ class Optimizer:
         self.opt.set_min_objective(self.objective(obj))
         return self.opt.optimize(x).reshape(shape, order='F')
 
-    # todo: you can set these as decorators
     def objective(self, func):
         def obj(x, grad):
             self.change = abs(x - self.prev).max()
