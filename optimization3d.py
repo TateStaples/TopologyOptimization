@@ -290,7 +290,7 @@ class LoadCase:
         fix_location = force_location.copy()
         force_location[0, x_nodes, :] = True
         fix_location[:, 0, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, -1e9, 0), force_location).affix(fix_location)
+        load_case = LoadCase(shape, 1).add_force((0, -1, 0), force_location).affix(fix_location)
         return load_case
 
     @staticmethod
@@ -302,7 +302,7 @@ class LoadCase:
         force_location[y_nodes, :, :] = True
         f2[0, :, :] = True
         # fix_location[0, :, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, -10000, 0), force_location).affix(fix_location, lock_x=False, lock_z=False).add_force((0, 10000, 0), f2)
+        load_case = LoadCase(shape, 1).add_force((0, -1e6, 0), force_location).affix(fix_location, lock_x=False, lock_z=False).add_force((0, 1e6, 0), f2)
         return load_case
 
     @staticmethod
@@ -318,17 +318,21 @@ class LoadCase:
         return load_case
 
     @staticmethod
-    def torsion(shape):
+    def torsion(shape, r):
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
         fix_location[0, :, :] = True
         load_case = LoadCase(shape, .1).affix(fix_location)
-        for x in (x_nodes + 1):
-            for z in (z_nodes + 1):
+        cx, cz = (x_nodes + 1)/2, (z_nodes + 1)/2
+        mult = 1e4
+        for x in range(x_nodes + 1):
+            for z in range(z_nodes + 1):
+                dis = np.sqrt((x-cx)**2 + (z-cz)**2)
+                if dis<r-1: continue
                 m = force_location.copy()
                 m[y_nodes, x, z] = True
-                f = ()  # todo: define as right angle to center
+                f = ((z-cz)*mult, 0, -(x-cx)*mult)
                 load_case.add_force(f, m)
         return load_case
 
@@ -456,9 +460,9 @@ class FEA:
         :param force: the forces being applied to the structure (at free dofs)
         :return: the nodel displacements (at freedofs)
         """
-        precondition_matrix = diags(stiffness.diagonal())
+        precondition_matrix = diags(1/stiffness.diagonal())
         # return linalg.cg(stiffness, force, x0=self.displacement[self.free_dofs, :], tol=1e-8, maxiter=8000, M=precondition_matrix)
-        return linalg.cg(stiffness, force, tol=1e-8, maxiter=8000, M=precondition_matrix)
+        return linalg.cg(stiffness, force, x0='Mb', tol=1e-8, maxiter=8000, M=precondition_matrix)
 
 
 class SensitivityAnalysis:
@@ -655,7 +659,6 @@ class Display:
     def save(self, filename):
         self.fig.savefig("data/imgs/"+filename)
 
-
 def passive_cylinder(shape):
     height, diameter, d2 = shape
     assert diameter == d2, "Not square face"
@@ -686,6 +689,12 @@ def load_cache(filename: str, radius: int, height: int):
     Y, X, Z = np.mgrid[0:y:y/height, 0:x:x/radius/2, 0:z:z/radius/2]
     return interpn([range(0, i) for i in original.shape], original, (Y, X, Z))
 
+units_per_meter = 1
+def scale_stress(x): return x * units_per_meter**2
+def unscale_stress(x): return x / units_per_meter**2
+def scale_stiffness(x): return x / units_per_meter**2
+def unscale_stiffness(x): return x * units_per_meter
+
 
 def project(radius: int, height: int, cache: str = None):
     shape = (height, radius*2, radius*2)  # the shape of our grid - used to create arrays
@@ -693,7 +702,7 @@ def project(radius: int, height: int, cache: str = None):
     # Allocate design variables (as array), initialize and allocate sens.
     volfrac = 0.12 * (np.pi/4)  # mult density times volume ratio of cylinder vs rect prism
     x = volfrac * np.ones(shape, dtype=float) if cache is None else load_cache(cache, radius, height)
-    material = Gyroid(0.3, 119e9, 1e-19, 3)  # define the material properties of you structure
+    material = Gyroid(0.3, 119e9/1e9, 1e-19, 3)  # define the material properties of you structure
     load1 = LoadCase.table(shape).add_force((0, 0, 0), dof_passive(shape))
     # load2 = LoadCase.torsion(shape)
     # https://www.sciencedirect.com/science/article/pii/S1359645418306293
@@ -720,6 +729,8 @@ def project(radius: int, height: int, cache: str = None):
     def stress_update(density, grad):
         density = density.reshape(shape, order='F')
         modeler.calc_stress(density)
+        d.display_3d(density, modeler.von_mises_stress.reshape(shape, order="F"))
+        plt.show()
         if grad.size > 0: grad[:] = sens.stress_sensitivity(density, modeler).flatten('F')
         print(f"Stress: {round(modeler.max_stress, 2)}", end="\t")
         return modeler.max_stress - yield_stress
@@ -736,13 +747,13 @@ def project(radius: int, height: int, cache: str = None):
     opt = Optimizer(shape, update, passive)  # updates the structure to new distribution
     x[:] = np.maximum(opt.min_densities.reshape(x.shape, order='F'), x)
     try:
-        x = opt.optimize(x, compliance_update, vol_update)
+        x = opt.optimize(x, stress_update, vol_update)
     except KeyboardInterrupt:
         save(x, "saved_progress")
         print("optimization interrupted by user request")
         quit()
     modeler.calc_stress(x)
-    fname = f"gr{radius}h{height}" if isinstance(material, Gyroid) else f"r{radius}h{height}"
+    fname = f"gr{radius}h{height}s" if isinstance(material, Gyroid) else f"r{radius}h{height}"
     save(x, fname)
     d.make_animation(fname)
     d.display_3d(x, modeler.von_mises_stress.reshape(shape, order="F"))
@@ -757,10 +768,10 @@ def run_load(fname):
     Quickly load and display the last generated structure
     """
     structure = load(fname)
-    gyroidizer.gyroidize(structure, scale=1/2, resolution=18j)
+    gyroidizer.gyroidize(structure, scale=1/6, resolution=18j)
     quit()
     shape = (y_nodes, x_nodes, z_nodes) = structure.shape
-    material = Gyroid(0.3, 116e9, 1e-19, 4)  # define the material properties of you structure
+    material = Gyroid(0.3, 116e9/100e9, 1e-19, 4)  # define the material properties of you structure
     modeler = FEA(shape, material, LoadCase.compress(shape))  # setup FEA analysis
     smooth_filter = Filter(2.5, shape)  # filter to prevent gaps
     # Setup and solve FE problem
@@ -773,12 +784,37 @@ def run_load(fname):
     d.save(fname)
 
 
+def stress_test():
+    global units_per_meter
+    units_per_meter = 1#100 * 10/3
+
+    # Allocate design variables (as array), initialize and allocate sens.
+    x = load("gr10h100")
+    shape = x.shape  # the shape of our grid - used to create arrays
+    material = Material(0.3, scale_stiffness(119e9), 1e-19, 3)  # define the material properties of you structure
+    load1 = LoadCase.compress(shape).add_force((0, 0, 0), dof_passive(shape))
+    modeler = FEA(shape, material, load1)  # physics simulations
+    yield_stress = unscale_stress(40e6)  # base titanium yield in 40 MPa
+
+    density = x.reshape(shape, order='F')
+    modeler.displace(density)
+
+    density = density.reshape(shape, order='F')
+    modeler.calc_stress(density)
+    # if grad.size > 0: grad[:] = sens.stress_sensitivity(density, modeler).flatten('F')
+    print(f"Stress:", scale_stress(modeler.max_stress))
+    print(modeler.max_stress, yield_stress)
+    pass
+
+
 if __name__ == '__main__':
-    q = 0.5  # 𝑞 is the stress relaxation parameter - prevent singularity
+    q = 0.1  # 𝑞 is the stress relaxation parameter - prevent singularity
     p = 10  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
-    project(8, 50)
-    # project(10, 100)
+    # stress_test()
+    # project(10, 50, cache="gr10h50")
+
+    project(5, 30)
     # project(16, 100)
     # project(20, 100)
-    # run_load("gr6h30")
+    # run_load("gr20h100")
     # main(40, 15, 6, 0.3, 3, 1.5)
