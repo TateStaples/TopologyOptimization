@@ -1,3 +1,4 @@
+import numpy as np
 import scipy.interpolate
 from numpy import pi
 from vedo import *
@@ -13,9 +14,18 @@ def lerp(density, x, y, z):  # check if this works
     return scipy.interpolate.interpn(grid, density, (y, x, z))
 
 
+def sheet_gyroid(x, y, z, t, scale):
+    f = 2 * pi * scale
+    sheet = cos(f * x) * cos(f * y) + sin(f * y) * cos(f * z) + sin(f * z) * sin(f * x)
+    t1 = sheet < t
+    t2 = -t < sheet
+    return t1 * t2 - 1
+
+
 def gyroid(x, y, z, t, scale):
     f = 2 * pi * scale
-    return cos(f*x)*sin(f*y) + cos(f*y)*sin(f*z) + cos(f*z)*sin(f*x) - t
+    dx, dy, dz = -np.pi/4, -np.pi/4, -np.pi/4  # phase shift to improve print-ability
+    return cos(f*x+dx)*sin(f*y+dy) + cos(f*y+dy)*sin(f*z+dz) + cos(f*z+dz)*sin(f*x+dx) - t
 
 
 def optimized_gyroid(x, y, z, t, scale):
@@ -23,8 +33,13 @@ def optimized_gyroid(x, y, z, t, scale):
     f = 2 * scale
     penal = (0.45*t - 0.58)*(cos(f*x)*cos(f*y)+cos(f*y)*cos(f*z)+cos(f*z)*cos(f*x))
     indices = np.where(abs(v)>1.41)
-    # v[indices] -= penal[indices]
-    return v
+    v[indices] -= penal[indices]
+
+    r = x.max()/2
+    center_x, center_y = r, r
+    fx, cx, fz, cz = np.floor(x*2)/2, np.ceil(x*2/2), np.floor(z*2)/2, np.ceil(z*2)/2
+    in_cylinder = (sqrt((fx-r)**2 + (fz-r)**2)<r) * (sqrt((cx-r)**2 + (fz-r)**2)<r) * (sqrt((fx-r)**2 + (cz-r)**2)<r) * (sqrt((cx-r)**2 + (cz-r)**2)<r)
+    return v*in_cylinder-1e-8
 
 
 def gyroidize(density, resolution=15j, scale=1):
@@ -49,26 +64,28 @@ def gen_mesh(volume):
     # Create a Volume, take the isosurface at 0, smooth and subdivide it
     v = Volume(volume)
     surface = v.isosurface(0).smooth().lw(1)
-    solid = TessellatedBox(n=(x-1, y-1, z-1)).alpha(1).triangulate()
-    solid.cut_with_mesh(surface)
-    gyr = merge(solid, surface).fill_holes()
-    # surface.cut_with_cylinder((x//2, 0, z//2), axis=(0, 1, 0), r=x//2)
+    # solid = TessellatedBox(n=(x-1, y-1, z-1)).alpha(1).triangulate()
+    # solid.cut_with_mesh(surface)
+    # gyr = merge(solid, surface).fill_holes()
+    surface.cut_with_cylinder((x//2, 0, z//2), axis=(0, 1, 0), r=x//2)
+    gyr = surface
     # gyr = surface.fill_holes()
-
     return gyr
 
 
 def display(mesh):
-    plotter = Plotter()#bg='wheat', bg2='lightblue', axes=5)
+    axes = Axes(mesh)
+    plotter = Plotter(axes=4)#bg='wheat', bg2='lightblue', axes=5)
     # plotter.add_ambient_occlusion(10)
     print("showing")
-    plotter.show(mesh)
+    plotter.show(mesh, axes)
 
 
 if __name__ == '__main__':
     resolution = 20j
-    strut_param = get_struct_param(0.3)
-    vol = compute_volume(resolution, 3, 3, 3)
+    strut_param = get_struct_param(0.1)
+    vol = compute_volume(resolution, 5, 5, 5)
+    print((vol>0).mean())
     mesh = gen_mesh(vol)
     # mesh.color("green")
     mesh.write('data/stl/Gyroid.stl')
