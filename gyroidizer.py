@@ -65,10 +65,19 @@ def display(mesh):
 def fill_holes(side, c = -1e300):
     return (side < 0) * side + c
 
+def in_cylinder(resolution, x_units, y_units, z_units, scale = 1):
+    x, y, z = np.mgrid[0:x_units-1:(resolution*x_units*scale), 0:y_units-1:(resolution*y_units*scale), 0:z_units-1:(resolution*z_units*scale)]
+    l = x_units - 1
+    w = y_units - 1
+    return (x - l/2)**2 + (y - w/2)**2 - (l/2)**2 # * ((l/2)**2 > (x - l/2)**2 + (y - w/2)**2)
+
 if __name__ == '__main__':
     resolution = 16j
     strut_param = get_struct_param(0.2)
     vol = compute_volume(resolution, 2, 2, 2)
+
+    # attempt to cut cylinder without vedo
+    cut = in_cylinder(resolution, 2, 2, 2)
 
     # attempt at filling holes manually
     vol[0, :, :] = fill_holes(vol[0, :, :])
@@ -79,9 +88,26 @@ if __name__ == '__main__':
     vol[:, y - 1, :] = fill_holes(vol[:, y - 1, :])
     vol[:, :, z - 1] = fill_holes(vol[:, :, z - 1])
 
+    # cap the bottom and top of the cylinder
+    cut[0, :, :] = fill_holes(cut[0, :, :])
+    cut[:, 0, :] = fill_holes(cut[:, 0, :])
+    cut[:, :, 0] = fill_holes(cut[:, :, 0])
+    x, y, z = cut.shape
+    cut[x - 1, :, :] = fill_holes(cut[x - 1, :, :])
+    cut[:, y - 1, :] = fill_holes(cut[:, y - 1, :])
+    cut[:, :, z - 1] = fill_holes(cut[:, :, z - 1])
+
     mesh = gen_mesh(vol)
+    cut_mesh = gen_mesh(cut)
+
+    # display(cut_vol)
+
+    # mesh.boolean("plus", cut_mesh)
 
     print(mesh.is_closed())
-    # mesh.color("green")
-    mesh.write('C:/Users/skoun/OneDrive - Duke University/Documents/Courses/EGR 101/STL/Gyroid_16.stl')
-    display(mesh)
+    cut_mesh.color("green")
+    # mesh.write('C:/Users/skoun/OneDrive - Duke University/Documents/Courses/EGR 101/STL/Gyroid_16.stl')
+    
+    plotter = Plotter()
+    print("showing")
+    plotter.show(mesh, cut_mesh)
