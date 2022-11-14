@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import scipy.interpolate
 from numpy import pi
 from vedo import *
+import numpy as np
 
 
 def get_struct_param(density): return (1-density-0.501) / 0.3325
@@ -21,10 +22,10 @@ def gyroid(x, y, z, t, scale):
 
 def optimized_gyroid(x, y, z, t, scale):
     v = gyroid(x, y, z, t, scale)
-    f = 2 * scale
-    penal = (0.45*t - 0.58)*(cos(f*x)*cos(f*y)+cos(f*y)*cos(f*z)+cos(f*z)*cos(f*x))
-    indices = np.where(abs(v)>1.41)
-    v[indices] -= penal[indices]
+    # f = 2 * pi * scale
+    # penal = (0.45*t - 0.58)*(cos(f*x)*cos(f*y)+cos(f*y)*cos(f*z)+cos(f*z)*cos(f*x))
+    # indices = np.where(abs(v)>1.41)
+    # v[indices] -= penal[indices]
     return v
 
 
@@ -46,11 +47,12 @@ def compute_volume(resolution, x_units, y_units, z_units):
 
 def gen_mesh(volume):
     # Create a Volume, take the isosurface at 0, smooth and subdivide it
-    surface = Volume(volume).isosurface(0).smooth().lw(1)
+    surface = Volume(volume).isosurface(0).smooth() #.lw(1)
     # solid = TessellatedBox(n=volume.shape).alpha(1) if envelope is None else envelope
     x, y, z = volume.shape
-    surface.cut_with_cylinder((x//2, 0, z//2), axis=(0, 1, 0), r=x//2)
-    gyr = surface.fill_holes()
+    # surface.cut_with_cylinder((x//2, 0, z//2), axis=(0, 1, 0), r=x//2)
+    # gyr = surface.fill_holes()
+    gyr = surface
     return gyr
 
 
@@ -60,12 +62,26 @@ def display(mesh):
     print("showing")
     plotter.show(mesh)
 
+def fill_holes(side, c = -1e300):
+    return (side < 0) * side + c
 
 if __name__ == '__main__':
-    resolution = 12j
+    resolution = 16j
     strut_param = get_struct_param(0.2)
-    vol = compute_volume(resolution, 4, 4, 4)
+    vol = compute_volume(resolution, 2, 2, 2)
+
+    # attempt at filling holes manually
+    vol[0, :, :] = fill_holes(vol[0, :, :])
+    vol[:, 0, :] = fill_holes(vol[:, 0, :])
+    vol[:, :, 0] = fill_holes(vol[:, :, 0])
+    x, y, z = vol.shape
+    vol[x - 1, :, :] = fill_holes(vol[x - 1, :, :])
+    vol[:, y - 1, :] = fill_holes(vol[:, y - 1, :])
+    vol[:, :, z - 1] = fill_holes(vol[:, :, z - 1])
+
     mesh = gen_mesh(vol)
+
+    print(mesh.is_closed())
     # mesh.color("green")
-    mesh.write('data/stl/Gyroid.stl')
+    mesh.write('C:/Users/skoun/OneDrive - Duke University/Documents/Courses/EGR 101/STL/Gyroid_16.stl')
     display(mesh)
