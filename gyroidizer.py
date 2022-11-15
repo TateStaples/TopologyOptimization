@@ -24,7 +24,7 @@ def sheet_gyroid(x, y, z, t, scale):
 
 def gyroid(x, y, z, t, scale):
     f = 2 * pi * scale
-    dx, dy, dz = -np.pi/4, -np.pi/4, -np.pi/4  # phase shift to improve print-ability
+    dx, dy, dz = -np.pi/4*scale, -np.pi/4*scale, -np.pi/4*scale  # phase shift to improve print-ability
     return cos(f*x+dx)*sin(f*y+dy) + cos(f*y+dy)*sin(f*z+dz) + cos(f*z+dz)*sin(f*x+dx) - t
 
 
@@ -36,9 +36,12 @@ def optimized_gyroid(x, y, z, t, scale):
     v[indices] -= penal[indices]
 
     r = x.max()/2
-    center_x, center_y = r, r
-    fx, cx, fz, cz = np.floor(x*2)/2, np.ceil(x*2/2), np.floor(z*2)/2, np.ceil(z*2)/2
+    # center_x, center_y = r, r
+    fx, cx, fz, cz = np.floor(x*2/scale)/2*scale, np.ceil(x*2/scale)/2*scale, np.floor(z*2/scale)/2*scale, np.ceil(z*2/scale)/2*scale
     in_cylinder = (sqrt((fx-r)**2 + (fz-r)**2)<r) * (sqrt((cx-r)**2 + (fz-r)**2)<r) * (sqrt((fx-r)**2 + (cz-r)**2)<r) * (sqrt((cx-r)**2 + (cz-r)**2)<r)
+    v[:, (0, v.shape[1]-1), :] = -1
+    v[(0, v.shape[0]-1), :, :] = -1
+    v[:, :, (0, v.shape[2]-1)] = -1
     return v*in_cylinder-1e-8
 
 
@@ -74,7 +77,7 @@ def gen_mesh(volume):
 
 
 def display(mesh):
-    axes = Axes(mesh)
+    axes = Axes(mesh, xminor_ticks=3)
     plotter = Plotter(axes=4)#bg='wheat', bg2='lightblue', axes=5)
     # plotter.add_ambient_occlusion(10)
     print("showing")
@@ -84,9 +87,10 @@ def display(mesh):
 if __name__ == '__main__':
     resolution = 20j
     strut_param = get_struct_param(0.1)
-    vol = compute_volume(resolution, 5, 5, 5)
+    vol = compute_volume(resolution, 4, 3, 4)
     print((vol>0).mean())
     mesh = gen_mesh(vol)
+    print(mesh.is_closed())
     # mesh.color("green")
     mesh.write('data/stl/Gyroid.stl')
     display(mesh)

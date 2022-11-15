@@ -1,5 +1,8 @@
+__author__ = "Tate Staples"
+
 import numpy as np
 
+import gyroidizer
 import utils
 from materials import Gyroid
 from load import LoadCase
@@ -67,7 +70,7 @@ def project(radius: int, height: int, units_per_meter=1, cache: str = None):
     opt = Optimizer(shape, update, passive)  # updates the structure to new distribution
     x[:] = np.maximum(opt.min_densities.reshape(x.shape, order='F'), x)
     try:
-        x = opt.optimize(x, compliance_update, vol_update, stress_update)
+        x = opt.optimize(x, compliance_update, vol_update)
     except KeyboardInterrupt:
         save(x, "saved_progress")
         print("optimization interrupted by user request")
@@ -81,5 +84,10 @@ def project(radius: int, height: int, units_per_meter=1, cache: str = None):
     d.save(fname)
 
 
+def run_load():
+    gyroidizer.gyroidize(load("gr15h10"), scale=1/2, resolution=23j)
+
+
 if __name__ == '__main__':
-    project(20, 50, units_per_meter=1000/3)
+    # run_load()
+    project(10, 50, units_per_meter=1000/3)

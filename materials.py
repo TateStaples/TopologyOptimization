@@ -1,3 +1,5 @@
+__author__ = "Tate Staples"
+
 import numpy as np
 
 
@@ -157,6 +159,8 @@ class Gyroid(Material):
     def stiffness(self, density: np.ndarray) -> np.ndarray:
         # https://link.springer.com/article/10.1007/s00170-020-06542-w
         # return (-482.65 * np.power(density, 3) + 938.34 * np.power(density, 2) + 27.693 * density + self.min_stiff) * self.max_stiff / 3145e6
+        # https://dukespace.lib.duke.edu/dspace/handle/10161/21490 - sheets
+        # return 54.541e9 * np.power(density, 1.51)
         # https://www.sciencedirect.com/science/article/pii/S1359645418306293
         return 0.293 * np.power(density, 2) * self.max_stiff + self.min_stiff
 

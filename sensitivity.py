@@ -1,3 +1,5 @@
+__author__ = "Tate Staples"
+
 import numpy as np
 
 from fea import FEA, stress_relaxation, norm_aggregation

@@ -1,6 +1,7 @@
-import numpy as np
-import typing
+__author__ = "Tate Staples"
+
 import math
+import numpy as np
 from scipy import sparse
 
 filter_weights = filter_net_weights = None

@@ -1,5 +1,6 @@
-import typing
+__author__ = "Tate Staples"
 
+import typing
 from scipy import sparse
 from materials import Material
 from load import LoadCase

@@ -1,3 +1,5 @@
+__author__ = "Tate Staples"
+
 import numpy as np
 import typing
 

@@ -1,0 +1,5 @@
+numpy~=1.23.4
+matplotlib~=3.5.0
+scipy~=1.9.3
+nlopt~=2.7.1
+vedo~=2022.4.1
