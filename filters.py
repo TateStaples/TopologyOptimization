@@ -8,6 +8,12 @@ filter_weights = filter_net_weights = None
 
 
 def prep_filter(shape, filter_radius: float):
+    """
+    Prepare the smoothing constants given a shape and smoothing radius
+    :param shape: shape of the structure
+    :param filter_radius: range at which to smooth
+    :return: None - update the filter_weights & filter_net_weights
+    """
     global filter_weights, filter_net_weights
     y_nodes, x_nodes, z_nodes = shape
     total_nodes = x_nodes * y_nodes * z_nodes
@@ -38,9 +44,19 @@ def prep_filter(shape, filter_radius: float):
 
 
 def filter_sensitivities(x: np.ndarray) -> np.ndarray:
+    """
+    Gradient of the filtering
+    :param x: the sensitivities in shape of the structure
+    :return: filtered sensitivities
+    """
     return np.array(filter_weights * (x.flatten('F') / filter_net_weights.flatten('F')).T).reshape(x.shape, order="F")
 
 
 def filter_structure(x: np.ndarray) -> np.ndarray:
+    """
+    Filtering of density to prevent checkerboarding and singularities
+    :param x: the densities in shape of the structure
+    :return: filtered densities
+    """
     return np.array(filter_weights * x.flatten("F") / filter_net_weights.flatten("F")).reshape(x.shape, order="F")
 

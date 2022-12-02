@@ -110,6 +110,8 @@ def run_load():
     gyroidizer.gyroidize(load("gr10h80"), scale=1/4, resolution=25j)
 
 
+# todo: add command line intialization option
+
+
 if __name__ == '__main__':
-    run_load()
-    # project(10, 80, cache="gr10h100", units_per_meter=1000/4)
+    project(10, 80, cache="gr10h100", units_per_meter=1000/4)

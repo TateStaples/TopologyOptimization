@@ -8,7 +8,7 @@ class LoadCase:
     """
     Simplified interface for applying load and affixing portions of the structure
     """
-    net_importance = 0
+    net_importance = 0  # todo: add multiple load case support.
 
     def __init__(self, shape, importance):
         self.importance = importance
@@ -59,8 +59,9 @@ class LoadCase:
         load = i3 * x * y + i1 * y + (y - 1 - i2)
         return load
 
+    # preset load cases
     @staticmethod
-    def cantilever(shape: typing.Tuple[int, int, int]):
+    def cantilever(shape: typing.Tuple[int, int, int]):  # affiix side, push other side
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
@@ -70,7 +71,7 @@ class LoadCase:
         return load_case
 
     @staticmethod
-    def compress(shape: typing.Tuple[int, int, int]):
+    def compress(shape: typing.Tuple[int, int, int]):  # press from top and bottom
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
@@ -82,7 +83,7 @@ class LoadCase:
         return load_case
 
     @staticmethod
-    def table(shape: typing.Tuple[int, int, int]):
+    def table(shape: typing.Tuple[int, int, int]):  # affixed bottom, load from top
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()
@@ -94,7 +95,7 @@ class LoadCase:
         return load_case
 
     @staticmethod
-    def torsion(shape, r):
+    def torsion(shape, r):  # twist top, affix bottom
         y_nodes, x_nodes, z_nodes = shape
         force_location = np.zeros((y_nodes + 1, (x_nodes + 1), (z_nodes + 1)), dtype=bool)
         fix_location = force_location.copy()

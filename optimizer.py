@@ -11,6 +11,9 @@ class Parameter:
 
 
 class Optimizer:
+    """
+    Implements the Method of Moving asymptotes optimizer algorithm to apply the calculated gradients and constraints
+    """
     def __init__(self, shape, update, passive_elem=()):
         """
         Set up the optimization parameters
@@ -39,7 +42,8 @@ class Optimizer:
 
     def optimize(self, x, obj, *constraints) -> np.ndarray:
         """
-        Starts the optimization loop
+        Starts the optimization loop. This function will run until final result.
+        Any intermediate should be in the update function specified at initialization
         :param x: the initial structure design
         :param obj: The objective function. Should be of form(density, grad) -> score & update grad array
         :param constraints: Sequence of inequality constraints of form(density, grad) -> score & update grad array
@@ -50,10 +54,16 @@ class Optimizer:
         x[:] = np.minimum(np.maximum(x, self.min_densities), self.max_densities)
         for c in constraints:
             self.opt.add_inequality_constraint(c)
-        self.opt.set_min_objective(self.objective(obj))
+        self.opt.set_min_objective(self._objective(obj))
         return self.opt.optimize(x).reshape(shape, order='F')
 
-    def objective(self, func):
+    def _objective(self, func):
+        """
+        Private method that adds a extra update when the optimization loop.
+        Specifically in runs the next iteration of the optimization before each calculation
+        :param func: The function that return the info on the objective variable
+        :return: # wrapped objective function
+        """
         def obj(x, grad):
             self.change = abs(x - self.prev).max()
             print(f"itr:{self.iteration}\t∆x:{round(self.change*100, 1)}% ({round(time.time() - self.start_time, 2)} s)", end='\t')

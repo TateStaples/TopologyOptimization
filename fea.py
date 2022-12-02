@@ -7,19 +7,19 @@ from load import LoadCase
 import numpy as np
 
 # Hyperparameters
-stress_relaxation = 0.1  # 𝑞 is the stress relaxation parameter - prevent singularity
-norm_aggregation = 10  # 𝑝 is the norm aggregation - higher values of p is closer to max stress but too high can cause oscillation and instability
+stress_relaxation = 0.1  # 𝑞 is the stress relaxation parameter - prevent singularity of stress at low density
+norm_aggregation = 10  # 𝑝 is the norm aggregation - higher p estimates max stress better but too high can be unstable
 
 
 class FEA:
     """
     Class the performs the physical analysis of how the structure deforms
     Equations:
-    1. force [F] = global stiffness [K] * displacement[U]
-    2. stress [s] at elem i = solid stiffness [D] * strain matrix [B] at elem i * U at elem i = (σ𝑖𝑥,σ𝑖𝑦,σ𝑖𝑧,σ𝑖𝑥𝑦,σ𝑖𝑦𝑧,σ𝑖𝑧𝑥).𝑇
-    3. relaxed stress(x) [rs/σ] = 𝜂(𝑥) * s, where 𝜂(𝑥) is some penalization scheme -> x^q for some q that prevents singularity from low densities
-    4. von mises stress[vm] = sqrt(σ𝑥^2+σ𝑦^2+σ𝑧^2−σ𝑥σ𝑦−σ𝑦σ𝑧−σ𝑧σ𝑥+3t𝑥𝑦^2+3t𝑦𝑧^2+3t𝑧𝑥^2) -> magnitude of stress for comparing to yield
-    5. global p norm stress [pn] = sum(vm^p)^(1-p) -> greater p is a more accurate but can cause oscillation (p>30)
+    1. force [F] = global stiffness [K] * displacement[U]  -> FEA approximates structure as points connected by springs
+    2. stress [s] @ elem i = solid stiffness [D] * strain matrix [B] @ elem i * U @ elem i = (σ𝑖𝑥,σ𝑖𝑦,σ𝑖𝑧,σ𝑖𝑥𝑦,σ𝑖𝑦𝑧,σ𝑖𝑧𝑥).𝑇
+    3. relaxed stress(x) [rs/σ] = 𝜂(𝑥) * s, where 𝜂(𝑥) = x^q for some q that prevents singularity from low densities
+    4. von mises stress[vm] = sqrt(σ𝑥^2+σ𝑦^2+σ𝑧^2−σ𝑥σ𝑦−σ𝑦σ𝑧−σ𝑧σ𝑥+3t𝑥𝑦^2+3t𝑦𝑧^2+3t𝑧𝑥^2) -> *magnitude of stress
+    5. global p norm stress [pn] = sum(vm^p)^(1-p) -> estimated max stress - large p better but can oscillate (p>30)
     """
     def __init__(self, shape: typing.Tuple[int, int, int], material: Material, load_case: LoadCase):
         """
@@ -109,6 +109,10 @@ class FEA:
         self.compliance = (self.material.stiffness(density).flatten() * self.strain.flatten()).sum()
 
     def solve(self, stiff, force):
+        """
+        Solve the equation with a method depending on complexity of the equation
+        :return: solved displacements
+        """
         if self.total_nodes < 1000:
             return self.solve_default(stiff, force)
         else:

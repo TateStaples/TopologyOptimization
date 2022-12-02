@@ -155,6 +155,7 @@ class Material:
 class Gyroid(Material):
     """
     Modified version of Material that reflects the scaling law of gyroids
+    ** this model assumes that gyroids are isotropic which isn't accurate at low densities
     """
     def stiffness(self, density: np.ndarray) -> np.ndarray:
         # https://link.springer.com/article/10.1007/s00170-020-06542-w

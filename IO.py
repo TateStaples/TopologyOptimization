@@ -45,9 +45,8 @@ class Display:
     def _colors(self, structure, strain):
         """Private method to calculate the face colors in the voxel array"""
         y_nodes, x_nodes, z_nodes = shape = structure.shape
-        s = strain
         strain = strain - strain.min()
-        self.max = strain.max()#max(self.max, strain.max())
+        self.max = max(self.max, strain.max())
         strain = np.minimum(1.0, strain / self.max)
         strain = np.maximum(0.0, strain)
         total_nodes = x_nodes * y_nodes * z_nodes
@@ -87,10 +86,12 @@ class Display:
 
 # saving and load of struct densities
 def save(structure: np.ndarray, filename: str) -> None:
+    """Save a structure into the data directory. Only need local name"""
     np.save("data/struct/"+filename+".npy", structure)
 
 
 def load(filename: str) -> np.ndarray:
+    """Load a structure out of the data directory. Only need local name"""
     return np.load("data/struct/"+filename+".npy")
 
 
