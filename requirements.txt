@@ -3,3 +3,6 @@ matplotlib~=3.5.0
 scipy~=1.9.3
 nlopt~=2.7.1
 vedo~=2022.4.1
+
+
+It is reccommended that python version 3.9.0 is used. vedo requires vtk to be installed, but with newer versions of python, vtk will not install correctly, and thus vedo will not install.

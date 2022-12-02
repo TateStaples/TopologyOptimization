@@ -1,8 +1,9 @@
 Priorities:
-- torsion case
+- physical testing in PLA to compare to original model (including padding)
+    (making sure the model is at a resolution that can be reasonable?)
+- physical printing
 
 Optimizer:
-    Multiple load cases
     get help with units
 
 
