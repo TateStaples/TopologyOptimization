@@ -45,8 +45,11 @@ class Display:
     def _colors(self, structure, strain):
         """Private method to calculate the face colors in the voxel array"""
         y_nodes, x_nodes, z_nodes = shape = structure.shape
-        self.max = max(self.max, strain.max())
+        s = strain
+        strain = strain - strain.min()
+        self.max = strain.max()#max(self.max, strain.max())
         strain = np.minimum(1.0, strain / self.max)
+        strain = np.maximum(0.0, strain)
         total_nodes = x_nodes * y_nodes * z_nodes
         hue = 2 / 3 - strain * 2 / 3  # get red to blue hue depending on displacement
         saturation = np.ones(shape)  # always high saturation
