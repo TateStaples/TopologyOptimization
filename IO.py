@@ -13,7 +13,7 @@ class Display:
         Setup the shared fig and parameters for future calls
         :param shape: the dimensions of the structure array
         """
-        matplotlib.use("TkAgg")
+        # matplotlib.use("TkAgg")
         (y_nodes, x_nodes, z_nodes) = shape
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(projection='3d')

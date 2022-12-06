@@ -79,7 +79,7 @@ class LoadCase:
         force_location[y_nodes, :, :] = True
         f2[0, :, :] = True
         # fix_location[0, :, :] = True
-        load_case = LoadCase(shape, 1).add_force((0, -1e6, 0), force_location).affix(fix_location, lock_x=False, lock_z=False).add_force((0, 1e6, 0), f2)
+        load_case = LoadCase(shape, 1).add_force((0, -1e4, 0), force_location).affix(fix_location, lock_x=False, lock_z=False).add_force((0, 1e4, 0), f2)
         return load_case
 
     @staticmethod

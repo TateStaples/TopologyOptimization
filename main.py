@@ -39,7 +39,7 @@ def project(radius: int, height: int, units_per_meter=1, cache: str = None):
     setup(shape, units_per_meter)
     passive = utils.passive_cylinder(shape)
     # Allocate design variables (as array), initialize and allocate sens.
-    volfrac = 0.12 * (np.pi/4)  # mult density times volume ratio of cylinder vs rect prism
+    volfrac = 0.24 * (np.pi/4)  # mult density times volume ratio of cylinder vs rect prism
     x = volfrac * np.ones(shape, dtype=float) if cache is None else load_cache(cache, radius, height)
     material = Gyroid(0.3, utils.scale_stress(119e9), 1e-19, 3)  # define the material properties of you structure
     load1 = LoadCase.compress(shape).add_force((0, 0, 0), utils.dof_passive(shape))
@@ -58,7 +58,7 @@ def project(radius: int, height: int, units_per_meter=1, cache: str = None):
 
     def vol_update(density, grad):
         density = density.reshape(shape, order='F')
-        if grad.size > 0: grad[:] = sensitivity.dv.flatten('F')
+        if grad.size > 0: grad[:] = np.ones(grad.shape)#sensitivity.dv.flatten('F')
         mean = density.mean()
         print(f"Vol: {round(mean * 100, 1)}", end="\t")
         return mean - volfrac
@@ -114,4 +114,11 @@ def run_load():
 
 
 if __name__ == '__main__':
+    s = load("gr10h80")
+    gyroidizer.gyroidize(s, resolution=25j, scale=1/4)
+    s.mean()
+    d = Display(s.shape)
+    d.display_3d(s, np.ones(s.shape))
+    d.show()
+    quit()
     project(10, 80, cache="gr10h100", units_per_meter=1000/4)
